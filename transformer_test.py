@@ -18,9 +18,9 @@ import numpy as np
 from torch.utils.data import TensorDataset, DataLoader
 from pytorch_lightning import loggers as pl_loggers
 
-def make_quad_data(num_domains, num_points):
+def make_quad_data(num_domains, num_points, coef):
   x=np.random.rand(num_domains, num_points, in_dim)
-  coef=np.random.rand(num_domains,3)
+
   y=coef[:,:1, np.newaxis]*x**2 + coef[:,1:2, np.newaxis]*x + coef[:,-1:, np.newaxis]
   return torch.Tensor(np.concatenate((x,y) ,axis=-1)), torch.Tensor(coef)
 
@@ -98,29 +98,29 @@ if __name__=="__main__":
     num_heads = 1
     out_dim = 1
     depth = 2
-    num_domains = 20
-    train_coef = np.array([[0, 2, 3], [1, 0, 1], [1, 1, 0]])
-    val_coef = np.array([[3, 2, 1]])
+    train_coef = np.array([[1, 0, 1]])
+    val_coef = np.array([[1, 0, 1]])
     num_points = 10
+    num_domains = train_coef.shape[0]
+
     num_val_io_pairs=5
 
 
-    train_dataset = TensorDataset(*make_quad_data(num_domains, num_points))
-    val_dataset = TensorDataset(*make_quad_data(1, num_points))
-
+    train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
+    val_dataset = TensorDataset(*make_quad_data(1, num_points, val_coef))
     train_loader = DataLoader(train_dataset, batch_size=10, shuffle=True)
     val_loader = DataLoader(val_dataset,batch_size=10)
 
-    tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/test")
+    tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
 
     base_trans=BaselineTrans(in_dim+out_dim,embed_dim, 3, num_heads)
 
     trainer1 = pl.Trainer(limit_train_batches=100,
                      logger=tb_logger,
-                      max_epochs=100,
+                      max_epochs=1000,
                       # log_every_n_steps = 5,
-                    # accelerator="gpu", devices=1,
-                      fast_dev_run=True
+                    accelerator="gpu", devices=1,
+                    #   fast_dev_run=True
                       )
     # trainer2 = pl.Trainer(limit_train_batches=100,
     #                  logger=tb_logger,

@@ -36,6 +36,29 @@ class linear_relu(nn.Module):
         self.net=nn.Sequential(*self.net)
     def forward(self, x):
         return self.net(x)
+class linear_elu(nn.Module):
+    def __init__(self, in_dim, hidden_dim, out_dim, depth):
+        super().__init__()
+        self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim), nn.ReLU()])
+        for i in range(depth):
+            self.net.append(nn.Linear(hidden_dim, hidden_dim))
+            self.net.append(nn.ELU())
+
+        self.net.append(nn.Linear(hidden_dim, out_dim))
+        self.net=nn.Sequential(*self.net)
+    def forward(self, x):
+        return self.net(x)
+class linear(nn.Module):
+    def __init__(self, in_dim, hidden_dim, out_dim, depth):
+        super().__init__()
+        self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim), nn.ReLU()])
+        for i in range(depth):
+            self.net.append(nn.Linear(hidden_dim, hidden_dim))
+
+        self.net.append(nn.Linear(hidden_dim, out_dim))
+        self.net=nn.Sequential(*self.net)
+    def forward(self, x):
+        return self.net(x)
 class reshape_linear_relu(linear_relu):
     def __init__(self, *args, **kwargs):
         super().__init__( *args, **kwargs)
@@ -46,18 +69,16 @@ class reshape_linear_relu(linear_relu):
 class TransformerBlock(nn.Module):
     def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
         super().__init__()
-        self.lin1 = reshape_linear_relu(in_dim, embed_dim, embed_dim, 2)
+        self.lin1 = linear(in_dim, embed_dim, embed_dim, 2)
 
         self.att1 = nn.MultiheadAttention(embed_dim, num_heads)
         self.layer_norm1 = nn.LayerNorm(embed_dim)
         self.layer_norm2 = nn.LayerNorm(out_dim)
 
-        self.lin2 = reshape_linear_relu(embed_dim, embed_dim, out_dim, 2)
+        self.lin2 = linear(embed_dim, embed_dim, out_dim, 2)
         self.a = nn.Linear(3,3)
 
     def forward(self, x):
-
-
         embed = self.lin1(x)
         after_layer1 = self.layer_norm1(self.att1(embed, embed, embed)[0] + embed)  # arbitrary
         result = self.layer_norm2(self.lin2(after_layer1))
@@ -71,8 +92,8 @@ class BaselineTrans(pl.LightningModule):
 
         self.loss=nn.MSELoss()
     def forward(self, x):
-
-        result = self.transformer(x)[:, 0]
+        result = self.transformer(x).mean(dim=1)
+        # result = self.transformer(x)[:, 0]
 
         return result
 
@@ -103,12 +124,13 @@ if __name__=="__main__":
     in_dim = 1
     hidden_dim_nature = 3
     hidden_dim_pred = 4
-    embed_dim = 3
+    embed_dim = 5
     num_heads = 1
     out_dim = 1
     depth = 2
     train_coef = np.array([[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0]])
-    val_coef = np.array([[1, 0, 1]])
+
+    val_coef = np.array([[0.5, 0.5, .5]])
     num_points = 10
     num_domains = train_coef.shape[0]
 
@@ -123,8 +145,8 @@ if __name__=="__main__":
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
 
     base_trans=BaselineTrans(in_dim+out_dim,embed_dim, 3, num_heads)
-    # base_dim=BaselineTrans.load_from_checkpoint("lightning_logs/trash/lightning_logs/version_0/checkpoints/epoch=999-step=2000.ckpt",
-    #                                             in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3, num_heads=num_heads)
+    base_trans=BaselineTrans.load_from_checkpoint("lightning_logs/trash/lightning_logs/version_4/checkpoints/epoch=999-step=6000.ckpt",
+                                                in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3, num_heads=num_heads)
 
     trainer1 = pl.Trainer(limit_train_batches=100,
                      logger=tb_logger,

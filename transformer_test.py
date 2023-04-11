@@ -36,22 +36,31 @@ class linear_relu(nn.Module):
         self.net=nn.Sequential(*self.net)
     def forward(self, x):
         return self.net(x)
+class reshape_linear_relu(linear_relu):
+    def __init__(self, *args, **kwargs):
+        super().__init__( *args, **kwargs)
+    def forward(self, x):
+        shape=x.shape
+        return self.net(x.reshape(shape[0]*shape[1], shape [2])).reshape(shape[0], shape[1], -1)
 
 class TransformerBlock(nn.Module):
     def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
         super().__init__()
-        self.lin1 = linear_relu(in_dim, embed_dim, embed_dim, 2)
+        self.lin1 = reshape_linear_relu(in_dim, embed_dim, embed_dim, 2)
 
         self.att1 = nn.MultiheadAttention(embed_dim, num_heads)
         self.layer_norm1 = nn.LayerNorm(embed_dim)
         self.layer_norm2 = nn.LayerNorm(out_dim)
 
-        self.lin2 = linear_relu(embed_dim, embed_dim, out_dim, 2)
+        self.lin2 = reshape_linear_relu(embed_dim, embed_dim, out_dim, 2)
+        self.a = nn.Linear(3,3)
 
     def forward(self, x):
+
+
         embed = self.lin1(x)
-        embed = self.layer_norm1(self.att1(embed, embed, embed)[0] + embed)  # arbitrary
-        result = self.layer_norm2(self.lin2(embed))
+        after_layer1 = self.layer_norm1(self.att1(embed, embed, embed)[0] + embed)  # arbitrary
+        result = self.layer_norm2(self.lin2(after_layer1))
         return result
 
 class BaselineTrans(pl.LightningModule):
@@ -98,7 +107,7 @@ if __name__=="__main__":
     num_heads = 1
     out_dim = 1
     depth = 2
-    train_coef = np.array([[1, 0, 1]])
+    train_coef = np.array([[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0]])
     val_coef = np.array([[1, 0, 1]])
     num_points = 10
     num_domains = train_coef.shape[0]
@@ -108,12 +117,14 @@ if __name__=="__main__":
 
     train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
     val_dataset = TensorDataset(*make_quad_data(1, num_points, val_coef))
-    train_loader = DataLoader(train_dataset, batch_size=10, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
     val_loader = DataLoader(val_dataset,batch_size=10)
 
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
 
     base_trans=BaselineTrans(in_dim+out_dim,embed_dim, 3, num_heads)
+    # base_dim=BaselineTrans.load_from_checkpoint("lightning_logs/trash/lightning_logs/version_0/checkpoints/epoch=999-step=2000.ckpt",
+    #                                             in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3, num_heads=num_heads)
 
     trainer1 = pl.Trainer(limit_train_batches=100,
                      logger=tb_logger,
@@ -132,7 +143,7 @@ if __name__=="__main__":
     #
     #                   )
 
-    # idea_module=Idea.load_from_checkpoint("/content/drive/MyDrive/Masters/Thesis/lightning_logs/version_5/checkpoints/epoch=1199-step=2400.ckpt")
+
     #
     # idea_module
 

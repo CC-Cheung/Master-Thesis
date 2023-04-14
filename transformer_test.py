@@ -10,6 +10,7 @@ Original file is located at
 
 import os
 import torch
+import wandb
 from torch import optim, nn, utils, Tensor
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
@@ -121,27 +122,66 @@ class BaselineTrans(pl.LightningModule):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
 
+class DoubleTrans(pl.LightningModule):
+    def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
+
+        self.save_hyperparameters()
+        self.transformer1 = TransformerBlock(in_dim, embed_dim, embed_dim, num_heads=num_heads)
+        self.transformer2 = TransformerBlock(embed_dim, embed_dim, out_dim, num_heads=num_heads)
+
+        self.loss = nn.MSELoss()
+    def forward(self, x):
+        result = self.transformer2(self.transformer1(x)).mean(dim=1)
+        # result = self.transformer(x)[:, 0]
+
+        return result
+
+    def training_step(self, batch, batch_idx):
+        # training_step defines the train loop.
+        # it is independent of forward
+
+        x, y= batch
+        result=self(x)
+        loss = self.loss(y, result)
+        # Logging to TensorBoard (if installed) by default
+        self.log("train_loss", loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx) :
+        x, y = batch
+        result = self(x)
+        loss = self.loss(y, result)
+        # Logging to TensorBoard (if installed) by default
+        self.log("val_loss", loss)
+
+    def configure_optimizers(self):
+        optimizer = optim.Adam(self.parameters(), lr=1e-3)
+        return optimizer
+
 if __name__=="__main__":
     # define any number of nn.Modules (or use your current ones)
+    #hello
     in_dim = 1
     hidden_dim_nature = 3
     hidden_dim_pred = 4
-    embed_dim = 8
     num_heads = 1
     out_dim = 1
     depth = 2
     np.random.seed(0)
     torch.use_deterministic_algorithms(True)
+    torch.manual_seed(0)
 
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
+    train_coef = np.array([[1, 0, 1],[0, 1, 1], [1, 1, 0]])
+    train_coef = np.random.rand(100,3)
 
-    train_coef = np.array([[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0]])
-    train_coef=np.random.rand(100,3)
-    val_coef = np.array([[0.5, 0.1, .8]])
+    # train_coef=np.random.rand(100,3)
+    val_coef = np.array([[0.5, 0.5, .5]])
     num_points = 10
     num_domains = train_coef.shape[0]
     num_val_io_pairs=5
-    torch.manual_seed(0)
+    embed_dim = 8
+    max_epoch=1000
 
     train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
     val_dataset = TensorDataset(*make_quad_data(1, num_points, val_coef))
@@ -149,15 +189,26 @@ if __name__=="__main__":
     val_loader = DataLoader(val_dataset,batch_size=10)
 
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
-    wandb_logger=WandbLogger(project="DA Thesis", log_model="all")
-    wandb_logger.watch()
+    wandb_logger=WandbLogger(project="DA Thesis", name="100 domains, not in test set",log_model="True")
+    wandb.init()
+    wandb.save("transformer_test.py")
+    # add multiple parameters
+    wandb_logger.experiment.config.update({"train_coef": train_coef,
+                                           "val_coef": val_coef,
+                                           "num_points": num_points,
+                                           "num_domains": num_domains,
+                                           "embed_dim":embed_dim,
+                                           "max_epoch": max_epoch})
+
     base_trans=BaselineTrans(in_dim+out_dim,embed_dim, 3, num_heads)
+    wandb_logger.watch(base_trans)
+
     # base_trans=BaselineTrans.load_from_checkpoint("lightning_logs/trash/lightning_logs/version_9/checkpoints/epoch=999-step=50000.ckpt",
     #                                             in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3, num_heads=num_heads)
 
     trainer1 = pl.Trainer(limit_train_batches=100,
                      logger=wandb_logger,
-                      max_epochs=1000,
+                      max_epochs=max_epoch,
                       # log_every_n_steps = 5,
                     accelerator="gpu", devices=1,
                     #   fast_dev_run=True

@@ -124,7 +124,7 @@ class BaselineTrans(pl.LightningModule):
 
 class DoubleTrans(pl.LightningModule):
     def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
-
+        super().__init__()
         self.save_hyperparameters()
         self.transformer1 = TransformerBlock(in_dim, embed_dim, embed_dim, num_heads=num_heads)
         self.transformer2 = TransformerBlock(embed_dim, embed_dim, out_dim, num_heads=num_heads)
@@ -189,7 +189,7 @@ if __name__=="__main__":
     val_loader = DataLoader(val_dataset,batch_size=10)
 
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
-    wandb_logger=WandbLogger(project="DA Thesis", name="100 domains, not in test set",log_model="True")
+    wandb_logger=WandbLogger(project="DA Thesis", name="doubletrans, not in test set",log_model="True")
     wandb.init()
     wandb.save("transformer_test.py")
     # add multiple parameters
@@ -200,7 +200,7 @@ if __name__=="__main__":
                                            "embed_dim":embed_dim,
                                            "max_epoch": max_epoch})
 
-    base_trans=BaselineTrans(in_dim+out_dim,embed_dim, 3, num_heads)
+    base_trans=DoubleTrans(in_dim+out_dim,embed_dim, 3, num_heads)
     wandb_logger.watch(base_trans)
 
     # base_trans=BaselineTrans.load_from_checkpoint("lightning_logs/trash/lightning_logs/version_9/checkpoints/epoch=999-step=50000.ckpt",

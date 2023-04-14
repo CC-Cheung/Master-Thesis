@@ -1,1 +1,6 @@
 kk.py
+/wandb/
+/.*/
+/lightning_logs/
+/DA Thesis/
+/artifacts/

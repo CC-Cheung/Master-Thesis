@@ -19,6 +19,8 @@ import numpy as np
 from torch.utils.data import TensorDataset, DataLoader
 from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.loggers import WandbLogger
+import glob
+
 
 def make_quad_data(num_domains, num_points, coef):
   x=np.random.rand(num_domains, num_points, in_dim)
@@ -157,10 +159,47 @@ class DoubleTrans(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
+class TripleTrans(pl.LightningModule):
+    def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
+        super().__init__()
+        self.save_hyperparameters()
+        self.transformer1 = TransformerBlock(in_dim, embed_dim, embed_dim, num_heads=num_heads)
+        self.transformer2 = TransformerBlock(embed_dim, embed_dim, embed_dim, num_heads=num_heads)
+        self.transformer3 = TransformerBlock(embed_dim, embed_dim, out_dim, num_heads=num_heads)
+
+        self.loss = nn.MSELoss()
+    def forward(self, x):
+        result = self.transformer3(self.transformer2(self.transformer1(x))).mean(dim=1)
+        # result = self.transformer(x)[:, 0]
+
+        return result
+
+    def training_step(self, batch, batch_idx):
+        # training_step defines the train loop.
+        # it is independent of forward
+
+        x, y= batch
+        result=self(x)
+        loss = self.loss(y, result)
+        # Logging to TensorBoard (if installed) by default
+        self.log("train_loss", loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx) :
+        x, y = batch
+        result = self(x)
+        loss = self.loss(y, result)
+        # Logging to TensorBoard (if installed) by default
+        self.log("val_loss", loss)
+
+    def configure_optimizers(self):
+        optimizer = optim.Adam(self.parameters(), lr=1e-3)
+        return optimizer
 
 if __name__=="__main__":
     # define any number of nn.Modules (or use your current ones)
-    #hello
+
+
     in_dim = 1
     hidden_dim_nature = 3
     hidden_dim_pred = 4
@@ -176,7 +215,7 @@ if __name__=="__main__":
     train_coef = np.random.rand(100,3)
 
     # train_coef=np.random.rand(100,3)
-    val_coef = np.array([[0.5, 0.5, .5]])
+    val_coef = np.array([[0.8, 0.1, .2]])
     num_points = 10
     num_domains = train_coef.shape[0]
     num_val_io_pairs=5
@@ -191,7 +230,6 @@ if __name__=="__main__":
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
     wandb_logger=WandbLogger(project="DA Thesis", name="doubletrans, not in test set",log_model="True")
     wandb.init()
-    wandb.save("transformer_test.py")
     # add multiple parameters
     wandb_logger.experiment.config.update({"train_coef": train_coef,
                                            "val_coef": val_coef,
@@ -203,7 +241,7 @@ if __name__=="__main__":
     base_trans=DoubleTrans(in_dim+out_dim,embed_dim, 3, num_heads)
     wandb_logger.watch(base_trans)
 
-    # base_trans=BaselineTrans.load_from_checkpoint("lightning_logs/trash/lightning_logs/version_9/checkpoints/epoch=999-step=50000.ckpt",
+    # base_trans=BaselineTrans.load_from_checkpoint("DA Thesis/wua294rk/checkpoints/epoch=203-step=204.ckpt",
     #                                             in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3, num_heads=num_heads)
 
     trainer1 = pl.Trainer(limit_train_batches=100,
@@ -230,6 +268,9 @@ if __name__=="__main__":
     # trainer1.fit(idea_module2, train_loader,val_loader)
 
     trainer1.fit(base_trans, train_loader, val_loader)
+    list_of_files = glob.glob('DA Thesis/**/*.ckpt',recursive=True)  # * means all if need specific format then *.csv
+    latest_file = max(list_of_files, key=os.path.getctime)
+    wandb.save(latest_file)
 
 # Commented out IPython magic to ensure Python compatibility.
 # %reload_ext tensorboard

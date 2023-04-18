@@ -20,9 +20,6 @@ from torch.utils.data import TensorDataset, DataLoader
 from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.loggers import WandbLogger
 import glob
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-
 def make_quad_data(num_domains, num_points, coef):
   x=np.random.rand(num_domains, num_points, in_dim)
 
@@ -64,15 +61,12 @@ class linear(nn.Module):
         self.net=nn.Sequential(*self.net)
     def forward(self, x):
         return self.net(x)
-# class reshape_linear_relu(linear_relu):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__( *args, **kwargs)
-#     def forward(self, x):
-#         shape=x.shape
-#         return self.net(x.reshape(shape[0]*shape[1], shape [2])).reshape(shape[0], shape[1], -1)
-
-
-
+class reshape_linear_relu(linear_relu):
+    def __init__(self, *args, **kwargs):
+        super().__init__( *args, **kwargs)
+    def forward(self, x):
+        shape=x.shape
+        return self.net(x.reshape(shape[0]*shape[1], shape [2])).reshape(shape[0], shape[1], -1)
 
 class TransformerBlock(nn.Module):
     def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
@@ -128,84 +122,9 @@ class BaselineTrans(pl.LightningModule):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
 
-class DoubleTrans(pl.LightningModule):
-    def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
-        super().__init__()
-        self.save_hyperparameters()
-        self.transformer1 = TransformerBlock(in_dim, embed_dim, embed_dim, num_heads=num_heads)
-        self.transformer2 = TransformerBlock(embed_dim, embed_dim, out_dim, num_heads=num_heads)
-
-        self.loss = nn.MSELoss()
-    def forward(self, x):
-        result = self.transformer2(self.transformer1(x)).mean(dim=1)
-        # result = self.transformer(x)[:, 0]
-
-        return result
-
-    def training_step(self, batch, batch_idx):
-        # training_step defines the train loop.
-        # it is independent of forward
-
-        x, y= batch
-        result=self(x)
-        loss = self.loss(y, result)
-        # Logging to TensorBoard (if installed) by default
-        self.log("train_loss", loss)
-        return loss
-
-    def validation_step(self, batch, batch_idx) :
-        x, y = batch
-        result = self(x)
-        loss = self.loss(y, result)
-        # Logging to TensorBoard (if installed) by default
-        self.log("val_loss", loss)
-
-    def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), betas = (0.9, 0.98),
-                 eps = 1.0e-9)
-        scheduler=ReduceLROnPlateau(optimizer, mode="min")
-        return {"optimizer":optimizer, "lr_scheduler": scheduler,"monitor": "train_loss"}
-class TripleTrans(pl.LightningModule):
-    def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
-        super().__init__()
-        self.save_hyperparameters()
-        self.transformer1 = TransformerBlock(in_dim, embed_dim, embed_dim, num_heads=num_heads)
-        self.transformer2 = TransformerBlock(embed_dim, embed_dim, embed_dim, num_heads=num_heads)
-        self.transformer3 = TransformerBlock(embed_dim, embed_dim, out_dim, num_heads=num_heads)
-
-        self.loss = nn.MSELoss()
-    def forward(self, x):
-        result = self.transformer3(self.transformer2(self.transformer1(x))).mean(dim=1)
-        # result = self.transformer(x)[:, 0]
-
-        return result
-
-    def training_step(self, batch, batch_idx):
-        # training_step defines the train loop.
-        # it is independent of forward
-
-        x, y= batch
-        result=self(x)
-        loss = self.loss(y, result)
-        # Logging to TensorBoard (if installed) by default
-        self.log("train_loss", loss)
-        return loss
-
-    def validation_step(self, batch, batch_idx) :
-        x, y = batch
-        result = self(x)
-        loss = self.loss(y, result)
-        # Logging to TensorBoard (if installed) by default
-        self.log("val_loss", loss)
-
-    def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=1e-3)
-        return optimizer
-
 if __name__=="__main__":
     # define any number of nn.Modules (or use your current ones)
-
-
+    #hello
     in_dim = 1
     hidden_dim_nature = 3
     hidden_dim_pred = 4
@@ -217,11 +136,11 @@ if __name__=="__main__":
     torch.manual_seed(0)
 
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
+    train_coef = np.array([[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0],[1, 0, 1], [0, 1, 1], [1, 1, 0]])
     train_coef = np.array([[1, 0, 1],[0, 1, 1], [1, 1, 0], [0.5, 0.5, 0.5],[0.25, 0.25, 0.25]])
-    train_coef = np.random.rand(100,3)
 
     # train_coef=np.random.rand(100,3)
-    val_coef = np.array([[0.8, 0.1, .2]])
+    val_coef = np.array([[1, 0, 1]])
     num_points = 10
     num_domains = train_coef.shape[0]
     num_val_io_pairs=5
@@ -234,8 +153,9 @@ if __name__=="__main__":
     val_loader = DataLoader(val_dataset,batch_size=10)
 
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
-    wandb_logger=WandbLogger(project="DA Thesis", name="doubletrans, 5 domains",log_model="True")
+    wandb_logger=WandbLogger(project="DA Thesis", name="5 domains, in test set",log_model="True")
     wandb.init()
+    wandb.save("transformer_test.py")
     # add multiple parameters
     wandb_logger.experiment.config.update({"train_coef": train_coef,
                                            "val_coef": val_coef,
@@ -244,14 +164,15 @@ if __name__=="__main__":
                                            "embed_dim":embed_dim,
                                            "max_epoch": max_epoch})
 
-    base_trans=DoubleTrans(in_dim+out_dim,embed_dim, 3, num_heads)
+    base_trans=BaselineTrans(in_dim+out_dim,embed_dim, 3, num_heads)
+    list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
+    latest_file = max(list_of_files, key=os.path.getctime)
+    base_trans=BaselineTrans.load_from_checkpoint(latest_file,
+                                                in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3, num_heads=num_heads)
     wandb_logger.watch(base_trans)
 
-    # base_trans=BaselineTrans.load_from_checkpoint("DA Thesis/wua294rk/checkpoints/epoch=203-step=204.ckpt",
-    #                                             in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3, num_heads=num_heads)
-
     trainer1 = pl.Trainer(limit_train_batches=100,
-                     logger=wandb_logger,
+                     # logger=wandb_logger,
                       max_epochs=max_epoch,
                       # log_every_n_steps = 5,
                     accelerator="gpu", devices=1,
@@ -274,7 +195,8 @@ if __name__=="__main__":
     # trainer1.fit(idea_module2, train_loader,val_loader)
 
     trainer1.fit(base_trans, train_loader, val_loader)
-    list_of_files = glob.glob('DA Thesis/**/*.ckpt',recursive=True)  # * means all if need specific format then *.csv
+    trainer1.fit(base_trans, train_loader, val_loader)
+    list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
     latest_file = max(list_of_files, key=os.path.getctime)
     wandb.save(latest_file)
 

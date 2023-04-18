@@ -85,10 +85,6 @@ class BaselineProfMod(pl.LightningModule):
 
         return result
 
-    def on_train_start(self):
-        self.log("hp/epochs", self.trainer.max_epochs)
-        self.log( "hp/num_domains", num_domains)
-        self.log( "hp/num_points", num_points)
     def training_step(self, batch, batch_idx):
         # training_step defines the train loop.
         # it is independent of forward

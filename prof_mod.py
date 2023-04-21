@@ -10,18 +10,26 @@ from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint
 import logging
+from pytorch_lightning.loggers import WandbLogger
+import glob
+import wandb
 
 
 def make_quad_data(num_domains, num_points, coef=None, permute=None):
     # domain, point, x_dim
-    x = np.arange(num_points).reshape((1, num_points, 1)) / 20
-    x = x.repeat(num_domains, axis=0)
+    # x = np.arange(num_points).reshape((1, num_points, 1)) / 20
+    # x = x.repeat(num_domains, axis=0)
+
     if coef is None:
         coef = np.random.rand(num_domains, 3)
+
+    in_dim = coef.shape[1]
+    x = np.random.rand(num_domains, num_points, in_dim)
     if permute is None:
         permute = np.random.rand(num_points)
-
-    y = coef[:, :1, np.newaxis] * x ** 2 + coef[:, 1:2, np.newaxis] * x + coef[:, -1:, np.newaxis]
+    y=0
+    for i in range(in_dim):
+        y=y+coef[:, i:i+1, np.newaxis]* x[:,:,i:i+1]**i
     #all_points, dim
     return [torch.Tensor(i.reshape((num_points * num_domains, -1))) for i in [x, y, x[:, permute, :], y[:, permute, :]]]
 
@@ -29,9 +37,15 @@ def make_quad_data(num_domains, num_points, coef=None, permute=None):
 def make_quad_data_val(num_points, num_exist, coef=None):
     if coef is None:
         coef = np.random.rand(3)
-    # point
-    x = np.arange(num_points) / 20
-    y = coef[0] * x ** 2 + coef[1] * x + coef[2]
+    in_dim = coef.shape[0]
+    # point, x_dim
+    x = np.random.rand(num_points, in_dim)
+
+    # x = np.arange(num_points) / 20
+    y = 0
+
+    for i in range(in_dim):
+        y = y + coef[i:i + 1] * x[:, i:i+1]**i
     num_non_exist = num_points - num_exist
     sep=(num_points-1)//num_exist
     rem=num_points%num_exist
@@ -41,19 +55,19 @@ def make_quad_data_val(num_points, num_exist, coef=None):
 
     #non_exist, exist, x_dim
     x_exist = x[idx_exist]
-    x_exist = x_exist[np.newaxis, :,np.newaxis].repeat(num_non_exist, axis=0)
+    x_exist = x_exist[np.newaxis, :].repeat(num_non_exist, axis=0)
 
     y_exist = y[idx_exist]
-    y_exist = y_exist[np.newaxis, :,np.newaxis].repeat(num_non_exist, axis=0)
+    y_exist = y_exist[np.newaxis, :].repeat(num_non_exist, axis=0)
 
     #non_exist, exist, x_dim
     x_not = x[idx_not]
-    x_not = x_not[:, np.newaxis, np.newaxis].repeat(num_exist, axis=1)
+    x_not = x_not[:, np.newaxis,:].repeat(num_exist, axis=1)
 
     y_not = y[idx_not]
 
     #non_exist, y_dim
-    y_not = y_not[:, np.newaxis]
+    y_not = y_not[:, np.newaxis,:]
     return [torch.Tensor(i) for i in [x_not, y_not, x_exist, y_exist]]
 
 
@@ -120,22 +134,59 @@ class BaselineProfMod(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
+class Strawman(pl.LightningModule):
+    def __init__(self, in_dim, hidden_dim, out_dim, depth=10):
+        super().__init__()
+        self.lin = linear_relu(in_dim, hidden_dim, 1, depth)
+        self.loss=nn.MSELoss()
 
+    def forward(self, x):
+        return self.lin(x)
+
+    def training_step(self, batch, batch_idx):
+        # training_step defines the train loop.
+        # it is independent of forward
+        #
+        x1, y1, x2, y2 = batch
+
+        loss = self.loss(self(x1), y1)+self.loss(self(x2), y2)
+        # Logging to TensorBoard (if installed) by default
+        self.log("train_loss", loss)
+        # for i, layer in enumerate(self.lin.net):
+        #     if i%2==0:
+        #         self.log(f"weights {i}", layer.weight.mean())
+        #         self.log(f"bias {i}", layer.bias.mean())
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        #not exist, exist, x_dim
+        x_not, y_not, x_exist, y_exist = batch
+        loss = self.loss(self(x_not),y_not)
+        # Logging to TensorBoard (if installed) by default
+        self.log("val_loss", loss)
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = optim.Adam(self.parameters(), lr=1e-3)
+        return optimizer
 
 if __name__ == "__main__":
-    # define any number of nn.Modules (or use your current ones)
-    in_dim = 1
+    in_dim = 3
     hidden_dim = 4
     out_dim = 4
     depth = 4
-    num_domains = 4
-    train_coef = np.array([[0, 2, 3], [1, 0, 1], [1, 1, 0], [1, 1, 1]])
+
+    train_coef = np.array([[0, 2, 3], [1, 0, 1], [1, 1, 0], [1, 1, 1], [4, 1, 1],[0.5, 0.5, 0.5],[3.5, 0.5, 1.5]])
+    num_domains=train_coef.shape[0]
     # train_coef = np.array([[0, 0, 0], [0, 0, 10], [0, 0, 100], [0, 0, 1000]])
 
     val_coef = np.array([3, 2, 1])
-    permute = [5, 6, 4, 7, 3, 8, 2, 9, 1, 0]
-    num_points = 10
-    num_val_io_pairs = 3
+    num_points = 50
+    permute = np.random.permutation(num_points)
+
+    num_val_io_pairs = 21
+    max_epoch=500
 
 
     train_dataset = TensorDataset(*make_quad_data(num_domains, num_points, coef=train_coef, permute=permute))
@@ -147,16 +198,28 @@ if __name__ == "__main__":
     # configure logging at the root level of Lightning
     # logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/prof_mod")
+    wandb_logger = WandbLogger(project="DA Thesis", name="prof mod dim more", log_model="True")
+    wandb.init()
+    wandb_logger.experiment.config.update({"train_coef": train_coef,
+                                           "val_coef": val_coef,
+                                           "num_points": num_points,
+                                           "num_domains": num_domains,
+                                           "num_val_io_pairs": num_val_io_pairs,
+                                           "in_dim": in_dim,
+                                           "max_epoch": max_epoch})
     # model_checkpoint=ModelCheckpoint(save_top_k=2, monitor="val_loss")
     base=BaselineProfMod(in_dim, hidden_dim, out_dim, depth)
-    base=BaselineProfMod.load_from_checkpoint(
-        "lightning_logs/prof_mod/lightning_logs/version_19/checkpoints/epoch=999-step=4000.ckpt",
-        in_dim=in_dim, hidden_dim=hidden_dim, out_dim=out_dim, depth=depth)
+    wandb_logger.watch(base)
+    # list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
+    # latest_file = max(list_of_files, key=os.path.getctime)
+    # base=BaselineProfMod.load_from_checkpoint(
+    #     latest_file,
+    #     in_dim=in_dim, hidden_dim=hidden_dim, out_dim=out_dim, depth=depth)
     early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=1000)
     trainer1 = pl.Trainer(limit_train_batches=100,
-                          logger=tb_logger,
-                          max_epochs=1000,
-                          log_every_n_steps = 5,
+                          logger=wandb_logger,
+                          max_epochs=max_epoch,
+                          # log_every_n_steps = 5,
                           accelerator="gpu", devices=1,
                           callbacks=[early_stop_callback,
                                      # model_checkpoint
@@ -180,7 +243,9 @@ if __name__ == "__main__":
     # trainer1.fit(idea_module2, train_loader,val_loader)
 
     trainer1.fit(base, train_loader, val_loader)
-
+    list_of_files = glob.glob('DA Thesis/**/*.ckpt',recursive=True)  # * means all if need specific format then *.csv
+    latest_file = max(list_of_files, key=os.path.getctime)
+    wandb.save(latest_file)
 # Commented out IPython magic to ensure Python compatibility.
 # %reload_ext tensorboard
 

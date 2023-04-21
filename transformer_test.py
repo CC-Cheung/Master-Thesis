@@ -77,13 +77,13 @@ class linear(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
         super().__init__()
-        self.lin1 = linear(in_dim, embed_dim, embed_dim, 2)
+        self.lin1 = linear_elu(in_dim, embed_dim, embed_dim, 2)
 
-        self.att1 = nn.MultiheadAttention(embed_dim, num_heads)
+        self.att1 = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
         self.layer_norm1 = nn.LayerNorm(embed_dim)
         self.layer_norm2 = nn.LayerNorm(out_dim)
 
-        self.lin2 = linear(embed_dim, embed_dim, out_dim, 2)
+        self.lin2 = linear_elu(embed_dim, embed_dim, out_dim, 2)
         self.a = nn.Linear(3,3)
 
     def forward(self, x):
@@ -161,10 +161,12 @@ class DoubleTrans(pl.LightningModule):
         self.log("val_loss", loss)
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), betas = (0.9, 0.98),
-                 eps = 1.0e-9)
-        scheduler=ReduceLROnPlateau(optimizer, mode="min")
-        return {"optimizer":optimizer, "lr_scheduler": scheduler,"monitor": "train_loss"}
+        # optimizer = optim.Adam(self.parameters(), betas = (0.9, 0.98),
+        #          eps = 1.0e-9)
+        # scheduler=ReduceLROnPlateau(optimizer, mode="min")
+        # return {"optimizer":optimizer, "lr_scheduler": scheduler,"monitor": "train_loss"}
+        optimizer = optim.Adam(self.parameters())
+        return optimizer
 class TripleTrans(pl.LightningModule):
     def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
         super().__init__()
@@ -218,7 +220,7 @@ if __name__=="__main__":
 
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
     train_coef = np.array([[1, 0, 1],[0, 1, 1], [1, 1, 0], [0.5, 0.5, 0.5],[0.25, 0.25, 0.25]])
-    train_coef = np.random.rand(100,3)
+    # train_coef = np.random.rand(100,3)
 
     # train_coef=np.random.rand(100,3)
     val_coef = np.array([[0.8, 0.1, .2]])
@@ -226,7 +228,7 @@ if __name__=="__main__":
     num_domains = train_coef.shape[0]
     num_val_io_pairs=5
     embed_dim = 8
-    max_epoch=1000
+    max_epoch=2000
 
     train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
     val_dataset = TensorDataset(*make_quad_data(1, num_points, val_coef))
@@ -234,7 +236,7 @@ if __name__=="__main__":
     val_loader = DataLoader(val_dataset,batch_size=10)
 
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
-    wandb_logger=WandbLogger(project="DA Thesis", name="doubletrans, 5 domains",log_model="True")
+    wandb_logger=WandbLogger(project="DA Thesis", name="trash",log_model="True")
     wandb.init()
     # add multiple parameters
     wandb_logger.experiment.config.update({"train_coef": train_coef,
@@ -244,11 +246,12 @@ if __name__=="__main__":
                                            "embed_dim":embed_dim,
                                            "max_epoch": max_epoch})
 
-    base_trans=DoubleTrans(in_dim+out_dim,embed_dim, 3, num_heads)
+    base_trans=TripleTrans(in_dim+out_dim,embed_dim, 3, num_heads)
     wandb_logger.watch(base_trans)
-
-    # base_trans=BaselineTrans.load_from_checkpoint("DA Thesis/wua294rk/checkpoints/epoch=203-step=204.ckpt",
-    #                                             in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3, num_heads=num_heads)
+    list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
+    latest_file = max(list_of_files, key=os.path.getctime)
+    base_trans=TripleTrans.load_from_checkpoint(latest_file,
+                                                in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3, num_heads=num_heads)
 
     trainer1 = pl.Trainer(limit_train_batches=100,
                      logger=wandb_logger,

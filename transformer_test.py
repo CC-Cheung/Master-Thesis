@@ -244,7 +244,8 @@ if __name__=="__main__":
                                            "num_points": num_points,
                                            "num_domains": num_domains,
                                            "embed_dim":embed_dim,
-                                           "max_epoch": max_epoch})
+                                           "max_epoch": max_epoch
+                                           "file":os.path.basename(__file__)})
 
     base_trans=TripleTrans(in_dim+out_dim,embed_dim, 3, num_heads)
     wandb_logger.watch(base_trans)

@@ -15,39 +15,30 @@ import glob
 import wandb
 
 
-def make_quad_data(num_domains, num_points, coef=None, permute=None):
+def make_class_data(num_domains, num_points, coef=None, permute=None):
     # domain, point, x_dim
-    # x = np.arange(num_points).reshape((1, num_points, 1)) / 20
-    # x = x.repeat(num_domains, axis=0)
+    x = np.arange(num_points).reshape((1, num_points, 1)) / 20
+    x = x.repeat(num_domains, axis=0)
 
-    if coef is None:
-        coef = np.random.rand(num_domains, 3)
+    mask_sep=coef[:,:1, np.newaxis].repeat(num_points, axis=1)
+    mask_flip=coef[:,1:, np.newaxis].repeat(num_points, axis=1)
 
-    in_dim = coef.shape[1]
-    x = np.random.rand(num_domains, num_points, in_dim)
-    if permute is None:
-        permute = np.random.rand(num_points)
-    y=0
-    for i in range(in_dim):
-        y=y+coef[:, i:i+1, np.newaxis]* x[:,:,i:i+1]**i
+    y = (x>mask_sep)==mask_flip
     #all_points, dim
     return [torch.Tensor(i.reshape((num_points * num_domains, -1))) for i in [x, y, x[:, permute, :], y[:, permute, :]]]
 
 
-def make_quad_data_val(num_points, num_exist, coef=None):
-    if coef is None:
-        coef = np.random.rand(3)
-    in_dim = coef.shape[0]
-    # point, x_dim
-    x = np.random.rand(num_points, in_dim)
+def make_class_data_val(num_points, num_exist, coef=None):
 
-    # x = np.arange(num_points) / 20
-    y = 0
+    # point
+    x = np.arange(num_points) / 20
+    mask_sep = coef[0].repeat(num_points)
+    mask_flip = coef[1].repeat(num_points)
+    y = (x>mask_sep)==mask_flip
 
-    for i in range(in_dim):
-        y = y + coef[i:i + 1] * x[:, i:i+1]**i
     num_non_exist = num_points - num_exist
-    sep=(num_points-1)//num_exist
+
+    sep=(num_points-1)//(num_exist-1)
     rem=num_points%num_exist
 
     idx_exist=[i for i in range(num_points) if i % sep == 0 and i<num_points-rem-sep or i==num_points-1]
@@ -55,46 +46,31 @@ def make_quad_data_val(num_points, num_exist, coef=None):
 
     #non_exist, exist, x_dim
     x_exist = x[idx_exist]
-    x_exist = x_exist[np.newaxis, :].repeat(num_non_exist, axis=0)
+    x_exist = x_exist[np.newaxis, :,np.newaxis].repeat(num_non_exist, axis=0)
 
     y_exist = y[idx_exist]
-    y_exist = y_exist[np.newaxis, :].repeat(num_non_exist, axis=0)
+    y_exist = y_exist[np.newaxis, :,np.newaxis].repeat(num_non_exist, axis=0)
 
     #non_exist, exist, x_dim
     x_not = x[idx_not]
-    x_not = x_not[:, np.newaxis,:].repeat(num_exist, axis=1)
+    x_not = x_not[:, np.newaxis, np.newaxis].repeat(num_exist, axis=1)
 
     y_not = y[idx_not]
 
     #non_exist, y_dim
-    y_not = y_not[:, np.newaxis,:]
+    y_not = y_not[:, np.newaxis]
     return [torch.Tensor(i) for i in [x_not, y_not, x_exist, y_exist]]
 
 
-class linear_relu(nn.Module):
-    def __init__(self, in_dim, hidden_dim, out_dim, depth):
+class LinearKernel(pl.LightningModule):
+    def __init__(self, in_dim, embed_dim):
         super().__init__()
-        self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim), nn.ReLU()])
-        for i in range(depth):
-            self.net.append(nn.Linear(hidden_dim, hidden_dim))
-            self.net.append(nn.ReLU())
-
-        self.net.append(nn.Linear(hidden_dim, out_dim))
-        self.net = nn.Sequential(*self.net)
-
-    def forward(self, x):
-        return self.net(x)
-
-
-class BaselineProfMod(pl.LightningModule):
-    def __init__(self, in_dim, hidden_dim, out_dim, depth=10):
-        super().__init__()
-        self.lin = linear_relu(in_dim, hidden_dim, out_dim, depth)
+        self.kernel = nn.Linear(in_dim, embed_dim)
         self.val_loss=nn.MSELoss()
 
     def forward(self, x1, x2):
-        a = self.lin(x1)
-        b = self.lin(x2)
+        a = self.kernel(x1)
+        b = self.kernel(x2)
         result = torch.linalg.norm(a-b, dim=-1, keepdim=True)+1e-12
 
         return result
@@ -129,6 +105,7 @@ class BaselineProfMod(pl.LightningModule):
         loss = self.val_loss(out, y_not)
         # Logging to TensorBoard (if installed) by default
         self.log("val_loss", loss)
+        self.log("val_accuracy", (out.round()-y_not).abs().mean())
         return loss
 
     def configure_optimizers(self):

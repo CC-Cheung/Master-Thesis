@@ -16,10 +16,10 @@ import wandb
 from torch.autograd import Variable
 
 
-def make_quad_data(num_points, in_dim, coef=None, permute=None):
+def make_quad_data(num_points, in_dim, coef=None, threshold=None):
     # coef should be num_domain, 2*in_dim+mixed+1, 1
 
-    num_domains, _ = coef.shape
+    num_domains, _ ,_= coef.shape
 
     x = torch.rand(num_domains, num_points, in_dim)
 
@@ -37,7 +37,9 @@ def make_quad_data(num_points, in_dim, coef=None, permute=None):
     terms = torch.concat((powers_of_x, mixed, torch.ones(num_domains, num_points, 1)), dim=-1)
     # num_domains, num_points, 2*in_dim+mixed+1
 
-    y = (terms @ coef).round()
+    #use average so evenish split
+    y_val = (terms @ coef)
+    y=y_val>y_val.mean(dim=1, keepdim=True)
     # num_domains, num_points, 1
 
     x_perm, y_perm = torch.cat((x, y), dim=-1)[:, torch.randperm(num_points), :] \
@@ -46,7 +48,7 @@ def make_quad_data(num_points, in_dim, coef=None, permute=None):
     return x, y, x_perm, y_perm
 
 
-def make_quad_data_val(num_points, num_exist, in_dim, coef=None):
+def make_quad_data_val(num_points, num_exist, in_dim, coef=None, threshold=None):
     # coef should be 2*in_dim+mixed+1, 1
 
     x = torch.rand(num_points, in_dim)
@@ -56,7 +58,7 @@ def make_quad_data_val(num_points, num_exist, in_dim, coef=None):
 
     mixed = torch.stack([powers_of_x_temp[0][:, i] * powers_of_x_temp[0][:, j]
                          for i in range(1, in_dim) for j in range(0, i)]) \
-        .reshape((num_domains, num_points, -1))
+        .reshape((num_points, -1))
     # num_points, mixed
 
     powers_of_x = torch.stack(powers_of_x_temp).reshape((num_points, -1))
@@ -65,7 +67,11 @@ def make_quad_data_val(num_points, num_exist, in_dim, coef=None):
     terms = torch.concat((powers_of_x, mixed, torch.ones(num_points, 1)), dim=-1)
     # num_points, 2*in_dim+mixed+1
 
-    y = (terms @ coef).round()
+    y_val = (terms @ coef)
+    # num_points, 1
+
+
+    y = y_val > y_val.mean()
     #  num_points, 1
     io_pairs=torch.cat((x,y), dim=1)
 
@@ -75,13 +81,41 @@ def make_quad_data_val(num_points, num_exist, in_dim, coef=None):
     # non_exist, exist, x_dim
     #check
     x_exist,y_exist = io_pairs[np.newaxis, :num_exist]\
-        .repeat(num_non_exist, axis=0).split(in_dim, dim=-1)
+        .repeat(num_non_exist,1,1).split(in_dim, dim=-1)
 
     x_not, y_not = io_pairs[num_exist:, np.newaxis] \
-        .repeat(num_exist, axis=1).split(in_dim, dim=-1)
+        .repeat(1,num_exist,1).split(in_dim, dim=-1)
+
 
     return x_not, y_not, x_exist, y_exist
 
+def make_linear_data_val(num_points, num_exist, in_dim, coef=None, threshold=None):
+
+    x = torch.rand(num_points, in_dim)
+
+    # num_points, mixed
+    terms = torch.concat((x, torch.ones(num_points, 1)), dim=-1)
+
+    y_val = (terms @ coef)
+    # num_points, 1
+
+    y = y_val > y_val.mean()
+    #  num_points, 1
+    io_pairs=torch.cat((x,y), dim=1)
+
+    num_non_exist=num_points-num_exist
+
+
+    # non_exist, exist, x_dim
+    #check
+    x_exist,y_exist = io_pairs[np.newaxis, :num_exist]\
+        .repeat(num_non_exist,1,1).split(in_dim, dim=-1)
+
+    x_not, y_not = io_pairs[num_exist:, np.newaxis] \
+        .repeat(1,num_exist,1).split(in_dim, dim=-1)
+
+
+    return x_not, y_not, x_exist, y_exist
 
 class LinearKernel(pl.LightningModule):
     def __init__(self, in_dim, embed_dim):
@@ -191,7 +225,7 @@ class QuadraticKernel(pl.LightningModule):
         # not exist, exist, 1
         distance = self(x_exist, x_not)
         weight = (1 / (distance.abs() + 1e-12))
-        normalized_weights = torch.nn.functional.normalize(weight, 1, 1)
+        normalized_weights = nn.functional.normalize(weight, 1, 1)
         # not_exist,1
         out = (y_exist * normalized_weights).sum(dim=1)
 
@@ -204,98 +238,100 @@ class QuadraticKernel(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
+def K_Nearest(batch):
 
+    # not exist, exist, x_dim
+    x_not, y_not, x_exist, y_exist = batch
+
+    distance = torch.linalg.norm(x_exist-x_not, dim=2, keepdim=True)
+    # not exist, exist, 1
+
+    weight = (1 / (distance+ 1e-12))
+    normalized_weights = torch.nn.functional.normalize(weight, 1, 1)
+    # not_exist,1
+    out = (y_exist * normalized_weights).sum(dim=1)
+    loss_fnc=nn.MSELoss()
+    y_not=y_not[:,0]
+    loss = loss_fnc(out, y_not)
+
+    return loss
 
 if __name__ == "__main__":
     in_dim = 3
     embed_dim = 4
-    out_dim = 4
-    depth = 4
-    num_domains = 3
 
-    train_coef = np.array(num_domains, 2 * in_dim + 1 + (in_dim - 1) * in_dim)
+    num_domains = 3
+    num_mixed=2 * in_dim + 1 + ((in_dim - 1) * in_dim)//2
+    train_coef = np.random.rand(num_domains, num_mixed,1)
+
 
     # train_coef = np.array([[0, 0, 0], [0, 0, 10], [0, 0, 100], [0, 0, 1000]])
 
-    val_coef = np.array([3, 2, 1])
+    val_coef = np.random.rand(num_mixed,1)
+    val_coef = np.array([[1],[1],[1], [2]])
+
+
     num_points = 50
     permute = np.random.permutation(num_points)
 
-    num_val_io_pairs = 21
+    num_val_io_pairs = 40
     max_epoch = 500
-
-    train_dataset = TensorDataset(*make_quad_data(num_domains, num_points, coef=train_coef, permute=permute))
-    val_dataset = TensorDataset(*make_quad_data_val(num_points, num_val_io_pairs, coef=val_coef))
+    num_not_exist=num_points-num_val_io_pairs
+    train_dataset = TensorDataset(*make_quad_data(num_points, in_dim, coef=train_coef))
+    # val_dataset = TensorDataset(*make_quad_data_val(num_points, num_val_io_pairs, in_dim,coef=val_coef))
+    val_dataset = TensorDataset(*make_linear_data_val(num_points, num_val_io_pairs, in_dim,coef=val_coef))
 
     train_loader = DataLoader(train_dataset, batch_size=10, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=10)
+    val_loader = DataLoader(val_dataset, batch_size=num_not_exist)
 
-    # configure logging at the root level of Lightning
-    # logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
-    tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/prof_mod")
-    wandb_logger = WandbLogger(project="DA Thesis", name="prof mod dim more", log_model="True")
-    wandb.init()
-    wandb_logger.experiment.config.update({"train_coef": train_coef,
-                                           "val_coef": val_coef,
-                                           "num_points": num_points,
-                                           "num_domains": num_domains,
-                                           "num_val_io_pairs": num_val_io_pairs,
-                                           "in_dim": in_dim,
-                                           "max_epoch": max_epoch,
-                                           "file": os.path.basename(__file__)})
+
+    # testing=True
+    # if testing:
+    #     wandb_logger = WandbLogger(project="DA Thesis", name="Test", log_model="True")
+    #     fast_dev_run=True
+    # else:
+    #     wandb_logger = WandbLogger(project="DA Thesis", name="Kernel", log_model="True")
+    #     fast_dev_run=False
+    #
+    # wandb.init()
+    # wandb_logger.experiment.config.update({"train_coef": train_coef,
+    #                                        "val_coef": val_coef,
+    #                                        "num_points": num_points,
+    #                                        "num_domains": num_domains,
+    #                                        "num_val_io_pairs": num_val_io_pairs,
+    #                                        "in_dim": in_dim,
+    #                                        "max_epoch": max_epoch,
+    #                                        "file": os.path.basename(__file__)})
+
+
+    baseline_k_nearest=K_Nearest(batch=next(iter(val_loader)))
+
+
+
     # model_checkpoint=ModelCheckpoint(save_top_k=2, monitor="val_loss")
-    base = BaselineProfMod(in_dim, hidden_dim, out_dim, depth)
+    base = K_Nearest()
     wandb_logger.watch(base)
     # list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
     # latest_file = max(list_of_files, key=os.path.getctime)
     # base=BaselineProfMod.load_from_checkpoint(
     #     latest_file,
     #     in_dim=in_dim, hidden_dim=hidden_dim, out_dim=out_dim, depth=depth)
+
     early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=1000)
     trainer1 = pl.Trainer(limit_train_batches=100,
                           logger=wandb_logger,
                           max_epochs=max_epoch,
                           # log_every_n_steps = 5,
                           accelerator="gpu", devices=1,
-                          callbacks=[early_stop_callback,
-                                     # model_checkpoint
-                                     ],
-                          # fast_dev_run=True
+                          # callbacks=[early_stop_callback,
+                          #            # model_checkpoint
+                          #            ],
+                          fast_dev_run=fast_dev_run
                           )
-    # trainer2 = pl.Trainer(limit_train_batches=100,
-    #                  logger=tb_logger,
-    #                   max_epochs=2400,
-    #                   log_every_n_steps = 1,
-    # accelerator = "gpu", devices = 1,
-    #
-    # # fast_dev_run=True
-    #
-    #                   )
 
-    # idea_module=Idea.load_from_checkpoint("/content/drive/MyDrive/Masters/Thesis/lightning_logs/version_5/checkpoints/epoch=1199-step=2400.ckpt")
-    #
-    # idea_module
-
-    # trainer1.fit(idea_module2, train_loader,val_loader)
 
     trainer1.fit(base, train_loader, val_loader)
-    list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
-    latest_file = max(list_of_files, key=os.path.getctime)
-    wandb.save(latest_file)
-# Commented out IPython magic to ensure Python compatibility.
-# %reload_ext tensorboard
 
-# Commented out IPython magic to ensure Python compatibility.
-# %tensorboard --logdir /content/drive/MyDrive/Masters/Thesis/lightning_logs --port=8008
-#
-# val_dataset[6]
-#
-# train_dataset[0]
-#
-# idea_module2(val_dataset[0:1][0],val_dataset[0:1][2] )
-
-# val_dataset[0:1][1]
-
-
-# Commented out IPython magic to ensure Python compatibility.
-# %debug
+    # list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
+    # latest_file = max(list_of_files, key=os.path.getctime)
+    # wandb.save(latest_file)

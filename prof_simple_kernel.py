@@ -52,7 +52,7 @@ def make_quad_data_val(num_points, num_exist, in_dim, coef=None, threshold=None)
     # coef should be 2*in_dim+mixed+1, 1
 
     x = torch.rand(num_points, in_dim)
-
+    x[-1,:]=0
     powers_of_x_temp = [x ** i for i in range(1, 3)]
     # 2|  num_points, in_dim
 
@@ -61,7 +61,7 @@ def make_quad_data_val(num_points, num_exist, in_dim, coef=None, threshold=None)
         .reshape((num_points, -1))
     # num_points, mixed
 
-    powers_of_x = torch.stack(powers_of_x_temp).reshape((num_points, -1))
+    powers_of_x = torch.concat(powers_of_x_temp, dim=-1)
     # num_points, 2*in_dim
 
     terms = torch.concat((powers_of_x, mixed, torch.ones(num_points, 1)), dim=-1)
@@ -257,29 +257,33 @@ def K_Nearest(batch):
     return loss
 
 if __name__ == "__main__":
-    in_dim = 3
+    np.random.seed(0)
+    torch.use_deterministic_algorithms(True)
+    torch.manual_seed(0)
+
+    in_dim = 2
     embed_dim = 4
 
     num_domains = 3
-    num_mixed=2 * in_dim + 1 + ((in_dim - 1) * in_dim)//2
-    train_coef = np.random.rand(num_domains, num_mixed,1)
+    num_terms= 2 * in_dim + 1 + ((in_dim - 1) * in_dim) // 2
+    train_coef = np.random.rand(num_domains, num_terms, 1)
 
 
     # train_coef = np.array([[0, 0, 0], [0, 0, 10], [0, 0, 100], [0, 0, 1000]])
 
-    val_coef = np.random.rand(num_mixed,1)
-    val_coef = np.array([[1],[1],[1], [2]])
+    val_coef = np.random.rand(num_terms, 1)
+    val_coef = np.ones((num_terms, 1))
 
 
-    num_points = 50
+    num_points = 1000
     permute = np.random.permutation(num_points)
 
-    num_val_io_pairs = 40
+    num_val_io_pairs = 999
     max_epoch = 500
     num_not_exist=num_points-num_val_io_pairs
     train_dataset = TensorDataset(*make_quad_data(num_points, in_dim, coef=train_coef))
-    # val_dataset = TensorDataset(*make_quad_data_val(num_points, num_val_io_pairs, in_dim,coef=val_coef))
-    val_dataset = TensorDataset(*make_linear_data_val(num_points, num_val_io_pairs, in_dim,coef=val_coef))
+    val_dataset = TensorDataset(*make_quad_data_val(num_points, num_val_io_pairs, in_dim,coef=val_coef))
+    # val_dataset = TensorDataset(*make_linear_data_val(num_points, num_val_io_pairs, in_dim,coef=val_coef))
 
     train_loader = DataLoader(train_dataset, batch_size=10, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=num_not_exist)

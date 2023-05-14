@@ -23,10 +23,10 @@ import glob
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-def make_quad_data(num_domains, num_points, coef):
+def make_lin_data(num_domains, num_points, coef):
   x=np.random.rand(num_domains, num_points, in_dim)
 
-  y=coef[:,:1, np.newaxis]*x**2 + coef[:,1:2, np.newaxis]*x + coef[:,-1:, np.newaxis]
+  y=coef[:,:1, np.newaxis]*x + coef[:,1:2, np.newaxis]
   return torch.Tensor(np.concatenate((x,y) ,axis=-1)), torch.Tensor(coef)
 
 class linear_relu(nn.Module):
@@ -75,15 +75,15 @@ class linear(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, in_dim, embed_dim, out_dim, num_heads=1):
+    def __init__(self, in_dim, embed_dim, out_dim, num_heads=1, lin_depth=3):
         super().__init__()
-        self.lin1 = linear_elu(in_dim, embed_dim, embed_dim, 2)
+        self.lin1 = linear_elu(in_dim, lin_depth, embed_dim, 2)
 
         self.att1 = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
         self.layer_norm1 = nn.LayerNorm(embed_dim)
         self.layer_norm2 = nn.LayerNorm(out_dim)
 
-        self.lin2 = linear_elu(embed_dim, embed_dim, out_dim, 2)
+        self.lin2 = linear_elu(embed_dim, lin_depth, out_dim, 2)
         self.a = nn.Linear(3,3)
 
     def forward(self, x):
@@ -212,7 +212,7 @@ if __name__=="__main__":
 
     in_dim = 1
     hidden_dim_nature = 3
-    hidden_dim_pred = 4
+    # hidden_dim_pred = 4
     num_heads = 1
     out_dim = 1
     depth = 2
@@ -221,22 +221,23 @@ if __name__=="__main__":
     torch.manual_seed(0)
 
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
-    train_coef = np.array([[1, 0, 1],[0, 1, 1], [1, 1, 0], [0.5, 0.5, 0.5],[0.25, 0.25, 0.25]])
-    train_coef = np.random.rand(100,3)
+    # train_coef = np.array([[1, 1],[0, 1], [2,0]])
+    train_coef = np.random.rand(100,2)
 
-    val_coef = np.array([[0.8, 0.1, .2]])
+    # train_coef=np.random.rand(100,3)
+    val_coef = np.array([[0.8, 0.5]])
     num_points = 10
     num_domains = train_coef.shape[0]
-    num_val_io_pairs=5
+    # num_val_io_pairs=5
     embed_dim = 8
-    max_epoch=1000
+    max_epoch=500
 
-    train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
-    val_dataset = TensorDataset(*make_quad_data(1, num_points, val_coef))
-    train_loader = DataLoader(train_dataset, batch_size=20, shuffle=True)
+    train_dataset = TensorDataset(*make_lin_data(num_domains, num_points,train_coef))
+    val_dataset = TensorDataset(*make_lin_data(1, num_points, val_coef))
+    train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
     val_loader = DataLoader(val_dataset,batch_size=10)
 
-    tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
+    # tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
     wandb_logger=WandbLogger(project="DA Thesis", name="trash",log_model="True")
     wandb.init()
     # add multiple parameters
@@ -248,15 +249,13 @@ if __name__=="__main__":
                                            "max_epoch": max_epoch,
                                            "file":os.path.basename(__file__)})
 
-    # base_trans=DoubleTrans(in_dim+out_dim,embed_dim, 3, num_heads)
-    # wandb_logger.watch(base_trans)
+    base_trans=BaselineTrans(in_dim+out_dim,embed_dim, 2, num_heads)
+    wandb_logger.watch(base_trans)
     # list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
     # latest_file = max(list_of_files, key=os.path.getctime)
-    # base_trans=DoubleTrans.load_from_checkpoint(latest_file,
-    #                                             in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3, num_heads=num_heads)
-    base_trans = DoubleTrans.load_from_checkpoint("epoch=2999-step=15000.ckpt",
-                                                    in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3,
-                                                    num_heads=num_heads)
+    # base_trans=BaselineTrans.load_from_checkpoint(latest_file,
+    #                                             in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=2, num_heads=num_heads)
+
     trainer1 = pl.Trainer(limit_train_batches=100,
                      logger=wandb_logger,
                       max_epochs=max_epoch,

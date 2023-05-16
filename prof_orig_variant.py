@@ -28,20 +28,21 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 def make_quad_data(num_domains, num_points, coef):
     x=np.random.rand(num_domains, num_points, in_dim)
 
-    y=coef[:,:1, np.newaxis]*x**2 + coef[:,1:2, np.newaxis]*x + coef[:,-1:, np.newaxis]
+    y=coef[:1, np.newaxis]*np.e**x + coef[1:2, np.newaxis]*x**2 + coef[-1:, np.newaxis]*np.sin(10*x)
     #coef will be num_domain, 3
     #y will be num_domains, num_points, out_dim=1
     x=torch.Tensor(x)
     y=torch.Tensor(y)
     result=[]
     for i in range(num_domains):
-        result.append(x[i:i+1, :, :])
-        result.append(y[i:i+1, :, :])
+        result.append(x[i, :, :])
+        result.append(y[i, :, :])
+    #[(num_points, in_dim), num_points(out_dim)]
     return result
 def make_quad_data_val(num_points, coef):
     x=np.random.rand(num_points, in_dim)
 
-    y=coef[:1, np.newaxis]*x**2 + coef[1:2, np.newaxis]*x + coef[-1:, np.newaxis]
+    y=coef[:1, np.newaxis]*np.e**x + coef[1:2, np.newaxis]*x**2 + coef[-1:, np.newaxis]*np.sin(10*x)
     #coef will be 3
     #y will be num_points, out_dim=1
     x=torch.Tensor(x)
@@ -206,7 +207,7 @@ if __name__=="__main__":
     # train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
     # val_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
 
-    train_dataset = TensorDataset(*make_quad_data_val(num_points,val_coef))
+    train_dataset = TensorDataset(*make_quad_data_val(num_val_io_pairs,val_coef))
     val_dataset = TensorDataset(*make_quad_data_val(num_points,val_coef))
 
     train_loader = DataLoader(train_dataset, batch_size=20, shuffle=True)
@@ -232,10 +233,10 @@ if __name__=="__main__":
     # latest_file = max(list_of_files, key=os.path.getctime)
     # base_trans=TestInvariant.load_from_checkpoint(latest_file,
     #                                             in_dim=in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
-    base_trans = TestInvariant.load_from_checkpoint("epoch=499-step=500.ckpt",
+    base_trans = TestInvariant.load_from_checkpoint("epoch=499-step=2500.ckpt",
                                                     in_dim=in_dim, f_embed_dim=f_embed_dim,
                                                     g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
-
+    #
     for param in base_trans.invariant.parameters():
         param.requires_grad = False
 

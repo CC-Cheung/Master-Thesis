@@ -28,20 +28,21 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 def make_quad_data(num_domains, num_points, coef):
     x=np.random.rand(num_domains, num_points, in_dim)
 
-    y=coef[:,:1, np.newaxis]*x**2 + coef[:,1:2, np.newaxis]*x + coef[:,-1:, np.newaxis]
+    y=coef[:1, np.newaxis]*np.e**x + coef[1:2, np.newaxis]*x**2 + coef[-1:, np.newaxis]*np.sin(10*x)
     #coef will be num_domain, 3
     #y will be num_domains, num_points, out_dim=1
     x=torch.Tensor(x)
     y=torch.Tensor(y)
     result=[]
     for i in range(num_domains):
-        result.append(x[i:i+1, :, :])
-        result.append(y[i:i+1, :, :])
+        result.append(x[i, :, :])
+        result.append(y[i, :, :])
+    #[(num_points, in_dim), num_points(out_dim)]
     return result
 def make_quad_data_val(num_points, coef):
     x=np.random.rand(num_points, in_dim)
 
-    y=coef[:1, np.newaxis]*x**2 + coef[1:2, np.newaxis]*x + coef[-1:, np.newaxis]
+    y=coef[:1, np.newaxis]*np.e**x + coef[1:2, np.newaxis]*x**2 + coef[-1:, np.newaxis]*np.sin(x)
     #coef will be 3
     #y will be num_points, out_dim=1
     x=torch.Tensor(x)
@@ -74,7 +75,7 @@ class linear_elu(nn.Module):
 class linear(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, depth):
         super().__init__()
-        self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim), nn.ReLU()])
+        self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim)])
         for i in range(depth):
             self.net.append(nn.Linear(hidden_dim, hidden_dim))
 
@@ -131,6 +132,7 @@ class TrainInvariant(pl.LightningModule):
             loss += losses[i]
         loss = loss / len(losses)        # Logging to TensorBoard (if installed) by default
         self.log("val_loss", loss)
+    # def on_fit_end(self):
 
     def configure_optimizers(self):
         #check if all there
@@ -139,24 +141,20 @@ class TrainInvariant(pl.LightningModule):
         return optimizer
 
 class TestInvariant(pl.LightningModule):
-    def load_from_checkpoint(
-        *args,
-        in_dim=1, g_embed_dim=2, out_dim=1,
-        **kwargs,
-    ) :
-        new_model=pl.LightningModule(*args, **kwargs)
-        new_model.invariant = linear_elu(in_dim, g_embed_dim, out_dim, 2)
-        return new_model
 
-    def __init__(self, in_dim, g_embed_dim, out_dim):
+
+    def __init__(self, in_dim, f_embed_dim, g_embed_dim, out_dim, num_domains):
         super().__init__()
 
-        self.invariant = linear_elu(in_dim, g_embed_dim, out_dim,2)
-        self.invariant.freeze()
-        self.test_variant=linear_elu(in_dim, g_embed_dim, out_dim,2)
-        self.eta=lambda x,y: x+y
+        self.invariant = linear_elu(in_dim, f_embed_dim, out_dim,2)
 
+        self.test_variant=linear_elu(in_dim, g_embed_dim, out_dim,2)
+        self.train_variants = nn.ModuleList([linear_elu(in_dim, g_embed_dim, out_dim, 2) for i in range(num_domains)]) #not used
+        self.num_domains=num_domains #not used
+
+        self.eta=lambda x,y: x+y
         self.loss=nn.MSELoss()
+
     def forward(self, x):
         result_f = self.invariant(x)
         result_g =self.test_variant(x)

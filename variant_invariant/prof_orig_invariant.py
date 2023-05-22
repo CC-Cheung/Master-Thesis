@@ -227,6 +227,7 @@ if __name__=="__main__":
                                            "file":os.path.basename(__file__)})
 
     base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
+    torch.save(base_trans.invariant, "test.pt")
     # base_trans=TestInvariant(in_dim, g_embed_dim=g_embed_dim,out_dim=out_dim)
 
     # list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv

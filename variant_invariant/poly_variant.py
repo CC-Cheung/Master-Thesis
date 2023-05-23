@@ -275,9 +275,8 @@ if __name__=="__main__":
     # trainer1.fit(idea_module2, train_loader,val_loader)
 
     trainer1.fit(base_trans, train_loader, val_loader)
-    list_of_files = glob.glob('DA Thesis/**/*.ckpt',recursive=True)  # * means all if need specific format then *.csv
-    latest_file = max(list_of_files, key=os.path.getctime)
-    wandb.save(latest_file)
+
+    wandb.save(get_latest_file())
 
 # Commented out IPython magic to ensure Python compatibility.
 # %reload_ext tensorboard

@@ -27,11 +27,11 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 def make_quad_data(num_domains, num_points, coef):
     x=np.random.rand(num_domains, num_points, in_dim)
-    x_reshaped=x.reshape(in_dim, num_points, num_domains)
-    y=(coef[:,0]*np.e**x_reshaped + \
-      coef[:,1] *x_reshaped**2 + \
-      coef[:,2]*np.sin(10*x_reshaped))\
-        .reshape(num_domains, num_points, in_dim)
+    x_transpose=x.transpose(2, 1, 0)
+    y=(coef[:,0] * np.e ** x_transpose + \
+      coef[:,1] * x_transpose ** 2 + \
+      coef[:,2] * np.sin(10 * x_transpose))\
+        .transpose(2, 1, 0)
     #coef will be num_domain, 3
     #y will be num_domains, num_points, out_dim=1
     x=torch.Tensor(x)
@@ -207,7 +207,7 @@ if __name__=="__main__":
     num_val_io_pairs=5
     f_embed_dim = 8
     g_embed_dim=2
-    max_epoch=2
+    max_epoch=500
 
     train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
     val_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))

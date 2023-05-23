@@ -100,16 +100,21 @@ class linear(nn.Module):
 class TrainInvariant(pl.LightningModule):
     def __init__(self, in_dim, f_embed_dim, g_embed_dim, out_dim, num_domains):
         super().__init__()
-        self.invariant=linear_elu(in_dim, f_embed_dim, out_dim, 2)
-        self.train_variants=nn.ModuleList([linear_elu(in_dim, g_embed_dim, out_dim, 2) for i in range (num_domains)])
-        self.test_variant=linear_elu(in_dim, g_embed_dim, out_dim,2)
+        self.invariant=nn.Linear(f_embed_dim, out_dim)
+        self.train_variants=nn.ModuleList([nn.Linear(g_embed_dim, out_dim) for i in range (num_domains)])
+        #not used
+        self.test_variant=nn.Linear(g_embed_dim, out_dim)
         self.num_domains=num_domains
         self.eta=lambda x,y: x+y
 
         self.loss=nn.MSELoss()
     def forward(self, x, domain_num):
-        result_f = self.invariant(x)
-        result_g =self.train_variants[domain_num](x)
+        #num_points, in_dim
+        powers_f=torch.cat([x**i for i in range (f_embed_dim)], dim=1)
+        powers_g=torch.cat([x**i for i in range (g_embed_dim)], dim=1)
+
+        result_f = self.invariant(powers_f)
+        result_g =self.train_variants[domain_num](powers_g)
 
         return self.eta(result_f, result_g)
 
@@ -144,22 +149,24 @@ class TrainInvariant(pl.LightningModule):
 
 class TestInvariant(pl.LightningModule):
 
-
     def __init__(self, in_dim, f_embed_dim, g_embed_dim, out_dim, num_domains):
         super().__init__()
+        self.invariant = nn.Linear(f_embed_dim, out_dim)
+        self.train_variants = nn.ModuleList([nn.Linear(g_embed_dim, out_dim) for i in range(num_domains)])
+        # not used
+        self.test_variant = nn.Linear(g_embed_dim, out_dim)
+        self.num_domains = num_domains
+        self.eta = lambda x, y: x + y
 
-        self.invariant = linear_elu(in_dim, f_embed_dim, out_dim,2)
+        self.loss = nn.MSELoss()
 
-        self.test_variant=linear_elu(in_dim, g_embed_dim, out_dim,2)
-        self.train_variants = nn.ModuleList([linear_elu(in_dim, g_embed_dim, out_dim, 2) for i in range(num_domains)]) #not used
-        self.num_domains=num_domains #not used
+    def forward(self, x, domain_num):
+        # num_points, in_dim
+        powers_f = torch.cat([x ** i for i in range(f_embed_dim)], dim=1)
+        powers_g = torch.cat([x ** i for i in range(g_embed_dim)], dim=1)
 
-        self.eta=lambda x,y: x+y
-        self.loss=nn.MSELoss()
-
-    def forward(self, x):
-        result_f = self.invariant(x)
-        result_g =self.test_variant(x)
+        result_f = self.invariant(powers_f)
+        result_g = self.test_variant(powers_g)
 
         return self.eta(result_f, result_g)
 
@@ -204,13 +211,13 @@ if __name__=="__main__":
     num_val_io_pairs=5
     f_embed_dim = 8
     g_embed_dim=2
-    max_epoch=500
+    max_epoch=1
 
     train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
     val_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
 
-    # train_dataset = TensorDataset(*make_quad_data_val(num_points,val_coef))
-    # val_dataset = TensorDataset(*make_quad_data_val(num_points,val_coef))
+    # train_dataset = TensorDataset(*make_quad_data_val(num_val_io_pairs, val_coef))
+    # val_dataset = TensorDataset(*make_quad_data_val(num_points, val_coef))
 
     train_loader = DataLoader(train_dataset, batch_size=20, shuffle=True)
     val_loader = DataLoader(val_dataset,batch_size=20)
@@ -228,8 +235,7 @@ if __name__=="__main__":
                                            "max_epoch": max_epoch,
                                            "file":os.path.basename(__file__)})
 
-    base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
-    torch.save(base_trans.invariant, "test.pt")
+    base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
     # base_trans=TestInvariant(in_dim, g_embed_dim=g_embed_dim,out_dim=out_dim)
 
     # list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv

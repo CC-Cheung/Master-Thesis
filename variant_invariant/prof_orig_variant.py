@@ -146,19 +146,18 @@ class TrainInvariant(pl.LightningModule):
 
         return optimizer
 
+
 class TestInvariant(pl.LightningModule):
 
 
     def __init__(self, in_dim, f_embed_dim, g_embed_dim, out_dim, num_domains):
         super().__init__()
+        self.invariant = linear_elu(in_dim, f_embed_dim, out_dim, 2)
+        self.train_variants = nn.ModuleList([linear_elu(in_dim, g_embed_dim, out_dim, 2) for i in range(num_domains)])
+        self.test_variant = linear_elu(in_dim, g_embed_dim, out_dim, 2)
+        self.num_domains = num_domains
+        self.eta = lambda x, y: x + y
 
-        self.invariant = linear_elu(in_dim, f_embed_dim, out_dim,2)
-
-        self.test_variant=linear_elu(in_dim, g_embed_dim, out_dim,2)
-        self.train_variants = nn.ModuleList([linear_elu(in_dim, g_embed_dim, out_dim, 2) for i in range(num_domains)]) #not used
-        self.num_domains=num_domains #not used
-
-        self.eta=lambda x,y: x+y
         self.loss=nn.MSELoss()
 
     def forward(self, x):
@@ -183,11 +182,13 @@ class TestInvariant(pl.LightningModule):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
 
         return optimizer
-
+def get_latest_file():
+    list_of_files = glob.glob(os.path.dirname(__file__) + '/DA Thesis/**/*.ckpt',
+                              recursive=True)  # * means all if need specific format then *.csv
+    latest_file = max(list_of_files, key=os.path.getctime)
+    return latest_file
 if __name__=="__main__":
     # define any number of nn.Modules (or use your current ones)
-
-
     in_dim = 1
     hidden_dim_nature = 3
     hidden_dim_pred = 4
@@ -200,7 +201,7 @@ if __name__=="__main__":
 
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
     train_coef = np.array([[1, 0, 1],[0, 1, 1], [1, 1, 0], [0.5, 0.5, 0.5],[0.25, 0.25, 0.25]])
-    train_coef = np.random.rand(100,3)
+    train_coef = np.random.rand(10,3)
 
     val_coef = np.array([0.8, 0.1, .2])
     num_points = 100
@@ -233,25 +234,25 @@ if __name__=="__main__":
                                            "file":os.path.basename(__file__)})
 
     # base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
-    base_trans=TestInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
+    base_trans=TestInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
 
     # list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
     # latest_file = max(list_of_files, key=os.path.getctime)
     # base_trans=TestInvariant.load_from_checkpoint(latest_file,
     #                                             in_dim=in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
 
-    # base_trans = TestInvariant.load_from_checkpoint("epoch=499-step=2500.ckpt",
+
+    # base_trans = TestInvariant.load_from_checkpoint(os.path.dirname(__file__)+"/epoch=499-step=2500.ckpt",
     #                                                 in_dim=in_dim, f_embed_dim=f_embed_dim,
-    #                                                 g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
-    # #
+    #                                                 g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)    #
     # for param in base_trans.invariant.parameters():
     #     param.requires_grad = False
+    # base_trans.invariant.eval()
 
-    base_trans.invariant.eval()
 
     wandb_logger.watch(base_trans, log="all")
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=1000)
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=100)
 
     trainer1 = pl.Trainer(limit_train_batches=100,
                           logger=wandb_logger,
@@ -278,11 +279,9 @@ if __name__=="__main__":
     # idea_module
 
     # trainer1.fit(idea_module2, train_loader,val_loader)
-
     trainer1.fit(base_trans, train_loader, val_loader)
-    list_of_files = glob.glob(os.path.dirname(__file__)+'/DA Thesis/**/*.ckpt',recursive=True)  # * means all if need specific format then *.csv
-    latest_file = max(list_of_files, key=os.path.getctime)
-    wandb.save(latest_file)
+
+    wandb.save(get_latest_file())
 
 # Commented out IPython magic to ensure Python compatibility.
 # %reload_ext tensorboard

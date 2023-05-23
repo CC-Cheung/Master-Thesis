@@ -4,3 +4,5 @@ kk.py
 /lightning_logs/
 /DA Thesis/
 /artifacts/
+*.ckpt
+*/wandb/

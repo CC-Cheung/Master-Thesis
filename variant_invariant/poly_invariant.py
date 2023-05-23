@@ -26,13 +26,14 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 def make_quad_data(num_domains, num_points, coef):
+
     x=np.random.rand(num_domains, num_points, in_dim)
     x_reshaped=x.reshape(in_dim, num_points, num_domains)
-    y=(coef[:,0]*np.e**x_reshaped + \
-      coef[:,1] *x_reshaped**2 + \
-      coef[:,2]*np.sin(10*x_reshaped))\
+    #coef num_domains, powers
+    y=np.array([(coef[:, i]*x_reshaped**i)
+                for i in range(coef.shape[1])]).sum(axis=0)\
         .reshape(num_domains, num_points, in_dim)
-    #coef will be num_domain, 3
+
     #y will be num_domains, num_points, out_dim=1
     x=torch.Tensor(x)
     y=torch.Tensor(y)
@@ -44,12 +45,7 @@ def make_quad_data(num_domains, num_points, coef):
     return result
 def make_quad_data_val(num_points, coef):
     x=np.random.rand(num_points, in_dim)
-
-    y=(coef[0]*np.e**x+ \
-      coef[1] *x**2 + \
-      coef[2]*np.sin(10*x))
-
-    #coef will be 3
+    y=np.array([(coef[i]*x**i) for i in range(coef.shape[1])]).sum(axis=0)
     #y will be num_points, out_dim=1
     x=torch.Tensor(x)
     y=torch.Tensor(y)
@@ -81,7 +77,7 @@ class linear_elu(nn.Module):
 class linear(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, depth):
         super().__init__()
-        self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim), nn.ReLU()])
+        self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim)])
         for i in range(depth):
             self.net.append(nn.Linear(hidden_dim, hidden_dim))
 
@@ -200,7 +196,7 @@ if __name__=="__main__":
 
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
     train_coef = np.array([[1, 0, 1],[0, 1, 1], [1, 1, 0], [0.5, 0.5, 0.5],[0.25, 0.25, 0.25]])
-    train_coef = np.random.rand(100,3)
+    # train_coef = np.random.rand(100,3)
 
     val_coef = np.array([0.8, 0.1, .2])
     num_points = 100
@@ -210,11 +206,11 @@ if __name__=="__main__":
     g_embed_dim=2
     max_epoch=500
 
-    # train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
-    # val_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
+    train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
+    val_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
 
-    train_dataset = TensorDataset(*make_quad_data_val(num_val_io_pairs,val_coef))
-    val_dataset = TensorDataset(*make_quad_data_val(num_points,val_coef))
+    # train_dataset = TensorDataset(*make_quad_data_val(num_points,val_coef))
+    # val_dataset = TensorDataset(*make_quad_data_val(num_points,val_coef))
 
     train_loader = DataLoader(train_dataset, batch_size=20, shuffle=True)
     val_loader = DataLoader(val_dataset,batch_size=20)
@@ -232,22 +228,17 @@ if __name__=="__main__":
                                            "max_epoch": max_epoch,
                                            "file":os.path.basename(__file__)})
 
-    # base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
-    base_trans=TestInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
+    base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
+    torch.save(base_trans.invariant, "test.pt")
+    # base_trans=TestInvariant(in_dim, g_embed_dim=g_embed_dim,out_dim=out_dim)
 
     # list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
     # latest_file = max(list_of_files, key=os.path.getctime)
     # base_trans=TestInvariant.load_from_checkpoint(latest_file,
-    #                                             in_dim=in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
-
-    # base_trans = TestInvariant.load_from_checkpoint("epoch=499-step=2500.ckpt",
-    #                                                 in_dim=in_dim, f_embed_dim=f_embed_dim,
-    #                                                 g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
-    # #
-    # for param in base_trans.invariant.parameters():
-    #     param.requires_grad = False
-
-    base_trans.invariant.eval()
+    #                                             in_dim=in_dim, g_embed_dim=g_embed_dim, out_dim=out_dim)
+    # base_trans = DoubleTrans.load_from_checkpoint("epoch=2999-step=15000.ckpt",
+    #                                                 in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3,
+    #                                                 num_heads=num_heads)
 
     wandb_logger.watch(base_trans, log="all")
 
@@ -280,7 +271,7 @@ if __name__=="__main__":
     # trainer1.fit(idea_module2, train_loader,val_loader)
 
     trainer1.fit(base_trans, train_loader, val_loader)
-    list_of_files = glob.glob(os.path.dirname(__file__)+'/DA Thesis/**/*.ckpt',recursive=True)  # * means all if need specific format then *.csv
+    list_of_files = glob.glob('DA Thesis/**/*.ckpt',recursive=True)  # * means all if need specific format then *.csv
     latest_file = max(list_of_files, key=os.path.getctime)
     wandb.save(latest_file)
 

@@ -27,8 +27,11 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 def make_quad_data(num_domains, num_points, coef):
     x=np.random.rand(num_domains, num_points, in_dim)
-
-    y=coef[:1, np.newaxis]*np.e**x + coef[1:2, np.newaxis]*x**2 + coef[-1:, np.newaxis]*np.sin(10*x)
+    x_reshaped=x.reshape(in_dim, num_points, num_domains)
+    y=(coef[:,0]*np.e**x_reshaped + \
+      coef[:,1] *x_reshaped**2 + \
+      coef[:,2]*np.sin(10*x_reshaped))\
+        .reshape(num_domains, num_points, in_dim)
     #coef will be num_domain, 3
     #y will be num_domains, num_points, out_dim=1
     x=torch.Tensor(x)
@@ -42,7 +45,10 @@ def make_quad_data(num_domains, num_points, coef):
 def make_quad_data_val(num_points, coef):
     x=np.random.rand(num_points, in_dim)
 
-    y=coef[:1, np.newaxis]*np.e**x + coef[1:2, np.newaxis]*x**2 + coef[-1:, np.newaxis]*np.sin(x)
+    y=(coef[0]*np.e**x+ \
+      coef[1] *x**2 + \
+      coef[2]*np.sin(10*x)).sum(axis=0)\
+
     #coef will be 3
     #y will be num_points, out_dim=1
     x=torch.Tensor(x)
@@ -227,13 +233,14 @@ if __name__=="__main__":
                                            "file":os.path.basename(__file__)})
 
     base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
-    torch.save(base_trans.invariant, "test.pt")
-    # base_trans=TestInvariant(in_dim, g_embed_dim=g_embed_dim,out_dim=out_dim)
 
-    # list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
-    # latest_file = max(list_of_files, key=os.path.getctime)
-    # base_trans=TestInvariant.load_from_checkpoint(latest_file,
-    #                                             in_dim=in_dim, g_embed_dim=g_embed_dim, out_dim=out_dim)
+    list_of_files = glob.glob(os.path.dirname(__file__) + '/DA Thesis/**/*.ckpt',
+                              recursive=True)  # * means all if need specific format then *.csv
+    latest_file = max(list_of_files, key=os.path.getctime)
+    # base_trans = TrainInvariant.load_from_checkpoint(in_dim, f_embed_dim=f_embed_dim,
+    #                                                  g_embed_dim=g_embed_dim,
+    #                                                  out_dim=out_dim,
+    #                                                  num_domains=1)
     # base_trans = DoubleTrans.load_from_checkpoint("epoch=2999-step=15000.ckpt",
     #                                                 in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3,
     #                                                 num_heads=num_heads)
@@ -269,7 +276,8 @@ if __name__=="__main__":
     # trainer1.fit(idea_module2, train_loader,val_loader)
 
     trainer1.fit(base_trans, train_loader, val_loader)
-    list_of_files = glob.glob('DA Thesis/**/*.ckpt',recursive=True)  # * means all if need specific format then *.csv
+    list_of_files = glob.glob(os.path.dirname(__file__) + '/DA Thesis/**/*.ckpt',
+                              recursive=True)  # * means all if need specific format then *.csv
     latest_file = max(list_of_files, key=os.path.getctime)
     wandb.save(latest_file)
 

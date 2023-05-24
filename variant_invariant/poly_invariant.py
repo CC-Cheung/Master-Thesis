@@ -26,11 +26,11 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 def make_quad_data(num_domains, num_points, coef):
-
-    x=np.random.rand(num_domains, num_points, in_dim)
+#make double range
+    x=np.random.rand(num_domains, num_points, in_dim)*2
     x_transpose=x.transpose(2, 1, 0)
     #coef num_domains, powers
-    y=np.array([(coef[:, i] * x_transpose ** i)
+    y=np.array([coef[:, i] * x_transpose ** i
                 for i in range(coef.shape[1])]).sum(axis=0)\
         .transpose(2, 1, 0)
 
@@ -44,7 +44,7 @@ def make_quad_data(num_domains, num_points, coef):
     #[(num_points, in_dim), num_points(out_dim)]
     return result
 def make_quad_data_val(num_points, coef):
-    x=np.random.rand(num_points, in_dim)
+    x=np.random.rand(num_points, in_dim)*2
     y=np.array([(coef[i]*x**i) for i in range(coef.shape[1])]).sum(axis=0)
     #y will be num_points, out_dim=1
     x=torch.Tensor(x)
@@ -85,16 +85,6 @@ class linear(nn.Module):
         self.net=nn.Sequential(*self.net)
     def forward(self, x):
         return self.net(x)
-# class reshape_linear_relu(linear_relu):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__( *args, **kwargs)
-#     def forward(self, x):
-#         shape=x.shape
-#         return self.net(x.reshape(shape[0]*shape[1], shape [2])).reshape(shape[0], shape[1], -1)
-
-
-
-
 
 
 class TrainInvariant(pl.LightningModule):
@@ -206,16 +196,21 @@ if __name__=="__main__":
     torch.manual_seed(0)
 
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
-    train_coef = np.array([[1, 0, 1],[0, 1, 1], [1, 1, 0], [0.5, 0.5, 0.5],[0.25, 0.25, 0.25]])
-    # train_coef = np.random.rand(100,3)
+    f_embed_dim = 6
+    g_embed_dim = 2
+    gen_dim=4
+    num_domains = 50
+    # train_coef = np.array([[1, 0, 1, 1],[0, 1, 1,1.5], [1, 1, 0, 1], [0.5, 0.5, 0.5,0.5],[0.25, 0.25, 0.25,0.25]])
+    train_coef = np.concatenate((np.random.rand(num_domains,g_embed_dim+1),
+                                 np.random.normal(loc=1, scale=0, size=(num_domains, gen_dim-g_embed_dim))), axis=1)
 
     val_coef = np.array([0.8, 0.1, .2])
-    num_points = 100
     num_domains = train_coef.shape[0]
-    num_val_io_pairs=5
-    f_embed_dim = 8
-    g_embed_dim=2
-    max_epoch=750
+
+    num_points = 100
+    num_val_io_pairs=100
+
+    max_epoch=3000
 
     train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
     val_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
@@ -223,8 +218,8 @@ if __name__=="__main__":
     # train_dataset = TensorDataset(*make_quad_data_val(num_val_io_pairs, val_coef))
     # val_dataset = TensorDataset(*make_quad_data_val(num_points, val_coef))
 
-    train_loader = DataLoader(train_dataset, batch_size=20, shuffle=True)
-    val_loader = DataLoader(val_dataset,batch_size=20)
+    train_loader = DataLoader(train_dataset, batch_size=50, shuffle=True)
+    val_loader = DataLoader(val_dataset,batch_size=50)
 
 
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
@@ -246,16 +241,22 @@ if __name__=="__main__":
     # latest_file = max(list_of_files, key=os.path.getctime)
     # base_trans=TestInvariant.load_from_checkpoint(latest_file,
     #                                             in_dim=in_dim, g_embed_dim=g_embed_dim, out_dim=out_dim)
-    base_trans = TrainInvariant.load_from_checkpoint(os.path.dirname(__file__) + '/epoch=749-step=3750.ckpt',
+    base_trans = TrainInvariant.load_from_checkpoint(os.path.dirname(__file__) + '/epoch=1999-step=4000.ckpt',
         in_dim=in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
 
-    base_trans.invariant.weight.data.fill_(0.00)
-    base_trans.invariant.bias.data.fill_(0.00)
-    for param in base_trans.invariant.parameters():
-        param.requires_grad = False
-    base_trans.invariant.eval()
-    # base_trans.train_variants[0].weight.data=torch.tensor([[0,1.0]])
-    # base_trans.train_variants[0].bias.data=torch.tensor([1.0])
+    #Zeroing f
+    # base_trans.invariant.weight.data.fill_(0.00)
+    # base_trans.invariant.bias.data.fill_(0.00)
+    # for param in base_trans.invariant.parameters():
+    #     param.requires_grad = False
+    # base_trans.invariant.eval()
+
+    #
+    # base_trans.invariant.weight.data=torch.tensor([[0,0.0,1,1,0,0]])
+    # base_trans.invariant.bias.data=torch.tensor([0.0])
+    #
+    # base_trans.train_variants[0].weight.data=torch.tensor(train_coef[:1, 1:3],dtype=torch.float32)
+    # base_trans.train_variants[0].bias.data=torch.tensor(train_coef[:1, 0],dtype=torch.float32)
 
 
     wandb_logger.watch(base_trans, log="all")

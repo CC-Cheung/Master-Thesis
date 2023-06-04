@@ -27,7 +27,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 def make_quad_data(num_domains, num_points, coef):
 #make double range
-    x=np.random.rand(num_domains, num_points, in_dim)*2
+    x=np.random.rand(num_domains, num_points, in_dim)
     x_transpose=x.transpose(2, 1, 0)
     #coef num_domains, powers
     y=np.array([coef[:, i] * x_transpose ** i
@@ -44,8 +44,39 @@ def make_quad_data(num_domains, num_points, coef):
     #[(num_points, in_dim), num_points(out_dim)]
     return result
 def make_quad_data_val(num_points, coef):
-    x=np.random.rand(num_points, in_dim)*2
+    x=np.random.rand(num_points, in_dim)
     y=np.array([(coef[i]*x**i) for i in range(coef.shape[1])]).sum(axis=0)
+    #y will be num_points, out_dim=1
+    x=torch.Tensor(x)
+    y=torch.Tensor(y)
+    return x,y
+
+
+def make_weird_data(num_domains, num_points, coef):
+    x=np.random.rand(num_domains, num_points, in_dim)
+    x_transpose=x.transpose(2, 1, 0)
+    y=(coef[:,0] * np.e ** x_transpose + \
+      coef[:,1] * x_transpose ** 2 + \
+      coef[:,2] * np.sin(10 * x_transpose))\
+        .transpose(2, 1, 0)
+    #coef will be num_domain, 3
+    #y will be num_domains, num_points, out_dim=1
+    x=torch.Tensor(x)
+    y=torch.Tensor(y)
+    result=[]
+    for i in range(num_domains):
+        result.append(x[i, :, :])
+        result.append(y[i, :, :])
+    #[(num_points, in_dim), num_points(out_dim)]
+    return result
+def make_weird_data_val(num_points, coef):
+    x=np.random.rand(num_points, in_dim)
+
+    y=(coef[0]*np.e**x+ \
+      coef[1] *x**2 + \
+      coef[2]*np.sin(10*x)).sum(axis=0)\
+
+    #coef will be 3
     #y will be num_points, out_dim=1
     x=torch.Tensor(x)
     y=torch.Tensor(y)
@@ -88,7 +119,7 @@ class linear(nn.Module):
 
 
 class TrainInvariant(pl.LightningModule):
-    def __init__(self, in_dim, f_embed_dim, g_embed_dim, out_dim, num_domains):
+    def __init__(self, f_embed_dim, g_embed_dim, out_dim, num_domains):
         super().__init__()
         self.invariant=nn.Linear(f_embed_dim, out_dim)
         self.train_variants=nn.ModuleList([nn.Linear(g_embed_dim, out_dim) for i in range (num_domains)])
@@ -137,45 +168,7 @@ class TrainInvariant(pl.LightningModule):
 
         return optimizer
 
-class TestInvariant(pl.LightningModule):
 
-    def __init__(self, in_dim, f_embed_dim, g_embed_dim, out_dim, num_domains):
-        super().__init__()
-        self.invariant = nn.Linear(f_embed_dim, out_dim)
-        self.train_variants = nn.ModuleList([nn.Linear(g_embed_dim, out_dim) for i in range(num_domains)])
-        # not used
-        self.test_variant = nn.Linear(g_embed_dim, out_dim)
-        self.num_domains = num_domains
-        self.eta = lambda x, y: x + y
-
-        self.loss = nn.MSELoss()
-
-    def forward(self, x, domain_num):
-        # num_points, in_dim
-        powers_f = torch.cat([x ** i for i in range(1,f_embed_dim+1)], dim=1)
-        powers_g = torch.cat([x ** i for i in range(1,g_embed_dim+1)], dim=1)
-
-        result_f = self.invariant(powers_f)
-        result_g = self.test_variant(powers_g)
-
-        return self.eta(result_f, result_g)
-
-    def training_step(self, batch, batch_idx):
-        loss=self.loss(self(batch[0]), batch[1])
-        # Logging to TensorBoard (if installed) by default
-        self.log("train_loss", loss)
-        return loss
-
-    def validation_step(self, batch, batch_idx) :
-        loss = self.loss(self(batch[0]), batch[1])
-        # Logging to TensorBoard (if installed) by default
-        self.log("val_loss", loss)
-        return loss
-
-    def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=1e-3)
-
-        return optimizer
 def get_latest_file():
     list_of_files = glob.glob(os.path.dirname(__file__) + '/DA Thesis/**/*.ckpt',
                               recursive=True)  # * means all if need specific format then *.csv
@@ -186,37 +179,32 @@ if __name__=="__main__":
 
 
     in_dim = 1
-    hidden_dim_nature = 3
-    hidden_dim_pred = 4
-    num_heads = 1
     out_dim = 1
-    depth = 2
     np.random.seed(0)
     torch.use_deterministic_algorithms(True)
     torch.manual_seed(0)
 
-    key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
     f_embed_dim = 6
     g_embed_dim = 2
-    gen_dim=4
-    num_domains = 50
-    # train_coef = np.array([[1, 0, 1, 1],[0, 1, 1,1.5], [1, 1, 0, 1], [0.5, 0.5, 0.5,0.5],[0.25, 0.25, 0.25,0.25]])
-    train_coef = np.concatenate((np.random.rand(num_domains,g_embed_dim+1),
-                                 np.random.normal(loc=1, scale=0, size=(num_domains, gen_dim-g_embed_dim))), axis=1)
+    num_domains = 2
+    gen_deg=4
 
-    val_coef = np.array([0.8, 0.1, .2])
+    train_coef = np.array([[0.798, -10.3, 25.15, -20,5], [0.5, 10.3, 1, -20, 5],
+                           [-0.18,2.45,-7,5,0]])
+
+    # train_coef = np.concatenate((np.random.rand(num_domains,g_embed_dim+1),
+    #                              np.random.normal(loc=1, scale=0.1, size=(num_domains, gen_deg-g_embed_dim))), axis=1)
+    # train_coef = np.random.normal(loc=1, scale=0.2, size=(num_domains, 3))
+
     num_domains = train_coef.shape[0]
 
     num_points = 100
-    num_val_io_pairs=100
-
     max_epoch=3000
 
     train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
     val_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
-
-    # train_dataset = TensorDataset(*make_quad_data_val(num_val_io_pairs, val_coef))
-    # val_dataset = TensorDataset(*make_quad_data_val(num_points, val_coef))
+    # train_dataset = TensorDataset(*make_weird_data(num_domains, num_points, train_coef))
+    # val_dataset = TensorDataset(*make_weird_data(num_domains, num_points, train_coef))
 
     train_loader = DataLoader(train_dataset, batch_size=50, shuffle=True)
     val_loader = DataLoader(val_dataset,batch_size=50)
@@ -226,23 +214,22 @@ if __name__=="__main__":
     wandb_logger=WandbLogger(project="DA Thesis", name="trash",log_model="True")
     wandb.init() ########################################################
     wandb_logger.experiment.config.update({"train_coef": train_coef,
-                                           "val_coef": val_coef,
                                            "num_points": num_points,
                                            "num_domains": num_domains,
                                            "f_embed_dim":f_embed_dim,
                                            "g_embed_dim": g_embed_dim,
                                            "max_epoch": max_epoch,
-                                           "file":os.path.basename(__file__)})
+                                           "file":os.path.basename(__file__),
+                                           "purpose": "debug polyinvar"})
 
-    base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
-    # base_trans=TestInvariant(in_dim, g_embed_dim=g_embed_dim,out_dim=out_dim)
+    base_trans=TrainInvariant( f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
+    #
+    base_trans=TrainInvariant.load_from_checkpoint(get_latest_file(),f_embed_dim=f_embed_dim,
+                                                 g_embed_dim=g_embed_dim, out_dim=out_dim, num_domains=num_domains)
+    # base_trans = TrainInvariant.load_from_checkpoint(os.path.dirname(__file__) + '/epoch=2999-step=6000.ckpt',
+    #      f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim, out_dim=out_dim,num_domains=num_domains)
 
-    # list_of_files = glob.glob('DA Thesis/**/*.ckpt', recursive=True)  # * means all if need specific format then *.csv
-    # latest_file = max(list_of_files, key=os.path.getctime)
-    # base_trans=TestInvariant.load_from_checkpoint(latest_file,
-    #                                             in_dim=in_dim, g_embed_dim=g_embed_dim, out_dim=out_dim)
-    base_trans = TrainInvariant.load_from_checkpoint(os.path.dirname(__file__) + '/epoch=1999-step=4000.ckpt',
-        in_dim=in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
+
 
     #Zeroing f
     # base_trans.invariant.weight.data.fill_(0.00)
@@ -261,7 +248,7 @@ if __name__=="__main__":
 
     wandb_logger.watch(base_trans, log="all")
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=1000)
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=500)
 
     trainer1 = pl.Trainer(limit_train_batches=100,
                           logger=wandb_logger,
@@ -271,23 +258,9 @@ if __name__=="__main__":
                           callbacks=[early_stop_callback,
                                      # model_checkpoint
                                      ],
-                    #   fast_dev_run=True
+                      # fast_dev_run=True
                       )
-    # trainer2 = pl.Trainer(limit_train_batches=100,
-    #                  logger=tb_logger,
-    #                   max_epochs=2400,
-    #                   log_every_n_steps = 1,
-    # accelerator = "gpu", devices = 1,
-    #
-    # # fast_dev_run=True
-    #
-    #                   )
 
-
-    #
-    # idea_module
-
-    # trainer1.fit(idea_module2, train_loader,val_loader)
 
     trainer1.fit(base_trans, train_loader, val_loader)
 

@@ -50,6 +50,36 @@ def make_quad_data_val(num_points, coef):
     x=torch.Tensor(x)
     y=torch.Tensor(y)
     return x,y
+
+def make_weird_data(num_domains, num_points, coef):
+    x=np.random.rand(num_domains, num_points, in_dim)
+    x_transpose=x.transpose(2, 1, 0)
+    y=(coef[:,0] * np.e ** x_transpose + \
+      coef[:,1] * x_transpose ** 2 + \
+      coef[:,2] * np.sin(10 * x_transpose))\
+        .transpose(2, 1, 0)
+    #coef will be num_domain, 3
+    #y will be num_domains, num_points, out_dim=1
+    x=torch.Tensor(x)
+    y=torch.Tensor(y)
+    result=[]
+    for i in range(num_domains):
+        result.append(x[i, :, :])
+        result.append(y[i, :, :])
+    #[(num_points, in_dim), num_points(out_dim)]
+    return result
+def make_weird_data_val(num_points, coef):
+    x=np.random.rand(num_points, in_dim)
+
+    y=(coef[0]*np.e**x+ \
+      coef[1] *x**2 + \
+      coef[2]*np.sin(10*x))\
+
+    #coef will be 3
+    #y will be num_points, out_dim=1
+    x=torch.Tensor(x)
+    y=torch.Tensor(y)
+    return x,y
 class linear_relu(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, depth):
         super().__init__()
@@ -212,18 +242,17 @@ if __name__=="__main__":
     train_coef = np.concatenate((np.random.rand(10, g_embed_dim + 1),
                                  np.random.normal(loc=1, scale=0, size=(10, gen_dim - g_embed_dim))), axis=1)
 
-    val_coef = np.concatenate((np.random.rand(g_embed_dim + 1),
-                                 np.random.normal(loc=1, scale=0.1, size=(gen_dim - g_embed_dim))))
+    # val_coef = np.concatenate((np.random.rand(g_embed_dim + 1),
+    #                              np.random.normal(loc=1, scale=0.1, size=(gen_deg - g_embed_dim))))
+    val_coef = np.random.normal(loc=1, scale=0.2, size=(3))
     num_points = 100
     num_domains = train_coef.shape[0]
     num_val_io_pairs = 10
-    max_epoch=500
+    max_epoch=2000
 
-    # train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
-    # val_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
 
-    train_dataset = TensorDataset(*make_quad_data_val(num_val_io_pairs,val_coef))
-    val_dataset = TensorDataset(*make_quad_data_val(num_points,val_coef))
+    train_dataset = TensorDataset(*make_weird_data_val(num_val_io_pairs,val_coef))
+    val_dataset = TensorDataset(*make_weird_data_val(num_points,val_coef))
 
     train_loader = DataLoader(train_dataset, batch_size=20, shuffle=True)
     val_loader = DataLoader(val_dataset,batch_size=20)
@@ -248,17 +277,17 @@ if __name__=="__main__":
     # latest_file = max(list_of_files, key=os.path.getctime)
     # base_trans=TestInvariant.load_from_checkpoint(latest_file,
     #                                             in_dim=in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
-    # base_trans = TestInvariant.load_from_checkpoint(os.path.dirname(__file__)+"/epoch=4999-step=25000.ckpt",
-    #                                                 in_dim=in_dim, f_embed_dim=f_embed_dim,
-    #                                                 g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=10)
-    #
-    # for param in base_trans.invariant.parameters():
-    #     param.requires_grad = False    #
-    # base_trans.invariant.eval()
+    base_trans = TestInvariant.load_from_checkpoint(os.path.dirname(__file__)+"/epoch=1077-step=1078.ckpt",
+                                                    in_dim=in_dim, f_embed_dim=f_embed_dim,
+                                                    g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=50)
+
+    for param in base_trans.invariant.parameters():
+        param.requires_grad = False    #
+    base_trans.invariant.eval()
 
     wandb_logger.watch(base_trans, log="all")
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=1000)
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=300)
 
     trainer1 = pl.Trainer(limit_train_batches=100,
                           logger=wandb_logger,

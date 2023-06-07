@@ -164,9 +164,15 @@ if __name__=="__main__":
     f_embed_dim = 6
     g_embed_dim = 2
     gen_dim=4
-    num_domains = 2
+    num_domains = 1
 
-    model_names=["3000.ckpt","6000.ckpt","9000.ckpt","12000.ckpt"]
+    model_names=["3000.ckpt",
+                 "6000.ckpt",
+                 # "9000.ckpt",
+                 # "12000.ckpt",
+                 ]
+    # model_names = ["epoch=2999-step=6000.ckpt"
+    #                ]
     x=np.arange(0,1,0.05)
 
 
@@ -193,19 +199,40 @@ if __name__=="__main__":
         all_fs.append(f_data)
         all_gs.append(g_data)
 
-    color = ["red", "orange", "green", "blue", "purple"]
+    color = ["red", "orange", "green", "blue", "purple", "gray"]
     #all_fs[model], all_gs[model][variant]
-    gen_coef = np.array([[0.798, -10.3, 25.15, -20,5], [0, 10.3, 1, -20, 5]])
+    gen_coef = np.array([[1.26, -18.95, 73.5, -105,50], [0, -18.95, 73.5, -105,50],
+                        ])
+    other=np.array([[1.26, -18.95, 73.5, -105,50,1]])
 
     for i in range(len(all_gs[0])):
         #variant (graph)
         for j in range(len(all_gs)):
             #model
-            plt.plot(x, all_gs[j][i] + all_fs[j], color='tab:'+color[j])
+            plt.plot(x, all_gs[j][i] + all_fs[j], color='tab:'+color[j], label=str((j+1)*3000))
         plt.plot(x,
                 np.array([(gen_coef[i][k] * x ** k) for k in range(gen_coef[i].size)]).sum(axis=0),
-                color='tab:'+color[-1])
+                color='tab:'+color[-1], label="actual")
+        # plt.plot(x,
+        #          np.array([(other[i][k] * x ** k) for k in range(other[i].size)]).sum(axis=0),
+        #          color="g", label="start")
         plt.title(str(gen_coef[i]))
+        plt.legend()
         plt.show()
 
+        for j in range(len(all_gs)):
+            #model
+            plt.plot(x, all_fs[j], color='tab:'+"red", label="f")
+            plt.plot(x, all_gs[j][i] , color='tab:'+"blue", label="g")
+            plt.plot(x,
+                np.array([(gen_coef[i][k] * x ** k) for k in range(gen_coef[i].size)]).sum(axis=0),
+                color='tab:'+color[-1], label="actual")
+            # plt.plot(x,
+            #          np.array([(other[i][k] * x ** k) for k in range(other[i].size)]).sum(axis=0),
+            #          color='g', label="start")
+            plt.plot(x, all_gs[j][i] + all_fs[j], color='tab:'+"purple", label="combined")
+
+            plt.title(str(gen_coef[i])+" "+str((j+1)*3000))
+            plt.legend()
+            plt.show()
 

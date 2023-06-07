@@ -189,8 +189,7 @@ if __name__=="__main__":
     num_domains = 2
     gen_deg=4
 
-    train_coef = np.array([[0.798, -10.3, 25.15, -20,5], [0.5, 10.3, 1, -20, 5],
-                           [-0.18,2.45,-7,5,0]])
+    train_coef = np.array([[1.26, -18.95, 73.5, -105,50]])
 
     # train_coef = np.concatenate((np.random.rand(num_domains,g_embed_dim+1),
     #                              np.random.normal(loc=1, scale=0.1, size=(num_domains, gen_deg-g_embed_dim))), axis=1)
@@ -224,8 +223,8 @@ if __name__=="__main__":
 
     base_trans=TrainInvariant( f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
     #
-    base_trans=TrainInvariant.load_from_checkpoint(get_latest_file(),f_embed_dim=f_embed_dim,
-                                                 g_embed_dim=g_embed_dim, out_dim=out_dim, num_domains=num_domains)
+    # base_trans=TrainInvariant.load_from_checkpoint(get_latest_file(),f_embed_dim=f_embed_dim,
+    #                                              g_embed_dim=g_embed_dim, out_dim=out_dim, num_domains=num_domains)
     # base_trans = TrainInvariant.load_from_checkpoint(os.path.dirname(__file__) + '/epoch=2999-step=6000.ckpt',
     #      f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim, out_dim=out_dim,num_domains=num_domains)
 
@@ -234,10 +233,16 @@ if __name__=="__main__":
     #Zeroing f
     # base_trans.invariant.weight.data.fill_(0.00)
     # base_trans.invariant.bias.data.fill_(0.00)
+    base_trans.invariant.weight.data=torch.tensor([[-18.95, 73.5, -105,50,1,0]])
+    base_trans.invariant.bias.data=torch.tensor([1.26])
     # for param in base_trans.invariant.parameters():
     #     param.requires_grad = False
     # base_trans.invariant.eval()
-
+    base_trans.train_variants[0].weight.data.fill_(0.00)
+    base_trans.train_variants[0].bias.data.fill_(0.00)
+    for param in base_trans.train_variants[0].parameters():
+        param.requires_grad = False
+    base_trans.train_variants[0].eval()
     #
     # base_trans.invariant.weight.data=torch.tensor([[0,0.0,1,1,0,0]])
     # base_trans.invariant.bias.data=torch.tensor([0.0])
@@ -249,6 +254,7 @@ if __name__=="__main__":
     wandb_logger.watch(base_trans, log="all")
 
     early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=500)
+    small_error_callback = EarlyStopping(monitor="val_loss", stopping_threshold=1e-4)
 
     trainer1 = pl.Trainer(limit_train_batches=100,
                           logger=wandb_logger,

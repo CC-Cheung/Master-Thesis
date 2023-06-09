@@ -9,6 +9,8 @@ Original file is located at
 
 
 import os
+
+import matplotlib.pyplot as plt
 import torch
 from pytorch_lightning.callbacks import EarlyStopping
 
@@ -54,61 +56,17 @@ def make_weird_data(num_domains, num_points, coef):
         .transpose(2, 1, 0)
     #coef will be num_domain, 3
     #y will be num_domains, num_points, out_dim=1
-    x=torch.Tensor(x)
-    y=torch.Tensor(y)
-    result=[]
-    for i in range(num_domains):
-        result.append(x[i, :, :])
-        result.append(y[i, :, :])
-    #[(num_points, in_dim), num_points(out_dim)]
-    return result
+
+    return x,y
 def make_weird_data_val(num_points, coef):
     x=np.random.rand(num_points, in_dim)
 
     y=(coef[0]*np.e**x+ \
       coef[1] *x**2 + \
-      coef[2]*np.sin(10*x)).sum(axis=0)\
+      coef[2]*np.sin(10*x)).sum(axis=0)
 
-    #coef will be 3
-    #y will be num_points, out_dim=1
-    x=torch.Tensor(x)
-    y=torch.Tensor(y)
+
     return x,y
-class linear_relu(nn.Module):
-    def __init__(self, in_dim, hidden_dim, out_dim, depth):
-        super().__init__()
-        self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim), nn.ReLU()])
-        for i in range(depth):
-            self.net.append(nn.Linear(hidden_dim, hidden_dim))
-            self.net.append(nn.ReLU())
-
-        self.net.append(nn.Linear(hidden_dim, out_dim))
-        self.net=nn.Sequential(*self.net)
-    def forward(self, x):
-        return self.net(x)
-class linear_elu(nn.Module):
-    def __init__(self, in_dim, hidden_dim, out_dim, depth):
-        super().__init__()
-        self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim), nn.ELU()])
-        for i in range(depth):
-            self.net.append(nn.Linear(hidden_dim, hidden_dim))
-            self.net.append(nn.ELU())
-
-        self.net.append(nn.Linear(hidden_dim, out_dim))
-        self.net=nn.Sequential(*self.net)
-    def forward(self, x):
-        return self.net(x)
-class linear(nn.Module):
-    def __init__(self, in_dim, hidden_dim, out_dim, depth):
-        super().__init__()
-        self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim)])
-        for i in range(depth):
-            self.net.append(nn.Linear(hidden_dim, hidden_dim))
-
-        self.net.append(nn.Linear(hidden_dim, out_dim))
-        self.net=nn.Sequential(*self.net)
-    def forward(self, x):
-        return self.net(x)
 
 
 
@@ -133,8 +91,12 @@ if __name__=="__main__":
     num_domains = 2
     gen_deg=4
 
-    train_coef = np.array([[1.26, -18.95, 73.5, -105,50,10,4,9,10]])
+    # train_coef = np.array([[1, -18.95, 73.5, 20,50,10,1],
+    #                        [1.26, 0, 15, 0,50,10,1],
+    #                        [26, -95, .5, 0,50,10,1]])
 
+    train_coef = np.array([[1, -1, 1],
+                           ])
     # train_coef = np.concatenate((np.random.rand(num_domains,g_embed_dim+1),
     #                              np.random.normal(loc=1, scale=0.1, size=(num_domains, gen_deg-g_embed_dim))), axis=1)
     # train_coef = np.random.normal(loc=1, scale=0.2, size=(num_domains, 3))
@@ -142,21 +104,52 @@ if __name__=="__main__":
     num_domains = train_coef.shape[0]
 
     num_points = 100
-    max_epoch=3000
 
-    train_dataset = make_quad_data(num_domains, num_points,train_coef)
-    val_dataset = make_quad_data(num_domains, num_points,train_coef)
+
+    # train_dataset = make_quad_data(num_domains, num_points,train_coef)
+    # val_dataset = make_quad_data(num_domains, num_points,train_coef)
+    train_dataset = make_weird_data(num_domains, num_points, train_coef)
     #num_domain, points, in_dim
 
-    powers_f = np.stack([train_dataset[0] ** i for i in range(0, f_embed_dim + 1)],)
-    # powers_g = np.stack([train_dataset [0]** i for i in range(0, g_embed_dim + 1)], dim=1)
+    powers_f = np.stack([train_dataset[0] ** i for i in range(0, f_embed_dim + 1)])
+    powers_g = np.stack([train_dataset [0]** i for i in range(0, g_embed_dim + 1)])
     #power, num_domain, num_points, in_dim
+    f_portion_of_a=powers_f \
+        .squeeze(axis=-1) \
+        .transpose((1,2,0))\
+        .reshape((-1, f_embed_dim+1))
+    #num_domain*num_points, power (in dim=1)
 
-    a=powers_f.squeeze().transpose()
-    b=train_dataset[1].squeeze(axis=0)
 
-    x=np.linalg.lstsq(a,b)
-    print(x)
+    g_portion_of_a=np.zeros((num_domains*num_points, num_domains*(g_embed_dim+1)))
+
+    powers_g_transpose=powers_g.squeeze(axis=-1).transpose((1,2,0))
+    #num_domain,num_points, power,  (in dim was 1)
+
+    for i in range(num_domains):
+        g_portion_of_a[i*num_points: (i+1)*num_points, i*(g_embed_dim+1): (i+1)*(g_embed_dim+1)]=\
+            powers_g_transpose[i, :, :]
+
+    a=np.concatenate((f_portion_of_a,g_portion_of_a), axis=1)
+    b=train_dataset[1].reshape((-1, in_dim))
+
+    result=np.linalg.lstsq(a,b)
+    x=np.arange(0,1,0.05)
+    print(x, result[0], result [1], result [2])
+    weird=[lambda x: np.e**x, lambda x:x**2, lambda x:np.sin(10*x)]
+
+    for i in range(num_domains):
+        coef=result[0][:f_embed_dim+1, 0]+\
+             np.concatenate((result[0][f_embed_dim+1+ (1+g_embed_dim)*i: f_embed_dim+1+(1+g_embed_dim)*(i+1), 0],
+                             np.zeros((f_embed_dim-g_embed_dim))))
+        y1=np.array([(coef[j] * x ** j) for j in range(coef.size)]).sum(axis=0)
+        # y2=np.array([(train_coef[i,j] * x ** j) for j in range(train_coef.shape[1])]).sum(axis=0)
+        y2=np.array([(train_coef[i,j] * weird[j](x)) for j in range(train_coef.shape[1])]).sum(axis=0)
+
+        plt.plot(x,y1)
+        plt.plot(x,y2)
+        plt.show()
+
 
     #deg 6 error [7.56572675e-27]
     #deg 7, error [1.19885257e-05]

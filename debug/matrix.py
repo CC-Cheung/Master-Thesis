@@ -41,7 +41,7 @@ def make_quad_data(num_domains, num_points, coef):
     return x,y
 def make_quad_data_val(num_points, coef):
     x=np.random.rand(num_points, in_dim)
-    y=np.array([(coef[i]*x**i) for i in range(coef.shape[1])]).sum(axis=0)
+    y=np.array([(coef[i]*x**i) for i in range(coef.shape[0])]).sum(axis=0)
     #y will be num_points, out_dim=1
 
     return x,y
@@ -63,7 +63,7 @@ def make_weird_data_val(num_points, coef):
 
     y=(coef[0]*np.e**x+ \
       coef[1] *x**2 + \
-      coef[2]*np.sin(10*x)).sum(axis=0)
+      coef[2]*np.sin(10*x))
 
 
     return x,y
@@ -95,33 +95,51 @@ if __name__=="__main__":
     #                        [1.26, 0, 15, 0,50,10,1],
     #                        [26, -95, .5, 0,50,10,1]])
 
-    train_coef = np.array([[1, -1, 1],
-                           ])
+    train_coef = np.array([[1.5, -1, 1],
+                         [1, -1.5, 1],
+                           [1, -1, 1.5]])
     # train_coef = np.concatenate((np.random.rand(num_domains,g_embed_dim+1),
     #                              np.random.normal(loc=1, scale=0.1, size=(num_domains, gen_deg-g_embed_dim))), axis=1)
     # train_coef = np.random.normal(loc=1, scale=0.2, size=(num_domains, 3))
+    val_coef=np.array([1, 0, 0])
 
     num_domains = train_coef.shape[0]
 
     num_points = 100
+    num_val_io=8
 
 
     # train_dataset = make_quad_data(num_domains, num_points,train_coef)
-    # val_dataset = make_quad_data(num_domains, num_points,train_coef)
+    # val_dataset = make_quad_data_val(num_val_io,val_coef)
+
     train_dataset = make_weird_data(num_domains, num_points, train_coef)
+    val_dataset = make_weird_data_val(num_val_io,val_coef)
+
+    # for i in range(2):
+    #     train_dataset[i]=np.concatenate((train_dataset[i], val_dataset[i]))
     #num_domain, points, in_dim
+
 
     powers_f = np.stack([train_dataset[0] ** i for i in range(0, f_embed_dim + 1)])
     powers_g = np.stack([train_dataset [0]** i for i in range(0, g_embed_dim + 1)])
     #power, num_domain, num_points, in_dim
+
+    powers_f_val = np.stack([val_dataset[0] ** i for i in range(0, f_embed_dim + 1)])
+    powers_g_val = np.stack([val_dataset[0] ** i for i in range(0, g_embed_dim + 1)])
+    #power, num_points, in_dim
+
     f_portion_of_a=powers_f \
         .squeeze(axis=-1) \
         .transpose((1,2,0))\
         .reshape((-1, f_embed_dim+1))
     #num_domain*num_points, power (in dim=1)
 
+    f_portion_of_a=np.concatenate((f_portion_of_a,
+                                  powers_f_val.transpose((1,2,0))
+                                                .reshape((-1, f_embed_dim+1))))
+    #num_domain*num_points + num_val_io, power
 
-    g_portion_of_a=np.zeros((num_domains*num_points, num_domains*(g_embed_dim+1)))
+    g_portion_of_a=np.zeros((num_domains*num_points+num_val_io, (num_domains+1)*(g_embed_dim+1)))
 
     powers_g_transpose=powers_g.squeeze(axis=-1).transpose((1,2,0))
     #num_domain,num_points, power,  (in dim was 1)
@@ -129,27 +147,67 @@ if __name__=="__main__":
     for i in range(num_domains):
         g_portion_of_a[i*num_points: (i+1)*num_points, i*(g_embed_dim+1): (i+1)*(g_embed_dim+1)]=\
             powers_g_transpose[i, :, :]
+    g_portion_of_a[num_domains*num_points:, num_domains*(g_embed_dim+1): ]=powers_g_val.transpose((1,2,0)).reshape((-1, g_embed_dim+1))
 
     a=np.concatenate((f_portion_of_a,g_portion_of_a), axis=1)
-    b=train_dataset[1].reshape((-1, in_dim))
+    # a=f_portion_of_a
+
+    b=np.concatenate((train_dataset[1].reshape((-1, in_dim)), val_dataset[1]))
 
     result=np.linalg.lstsq(a,b)
     x=np.arange(0,1,0.05)
-    print(x, result[0], result [1], result [2])
     weird=[lambda x: np.e**x, lambda x:x**2, lambda x:np.sin(10*x)]
 
     for i in range(num_domains):
-        coef=result[0][:f_embed_dim+1, 0]+\
-             np.concatenate((result[0][f_embed_dim+1+ (1+g_embed_dim)*i: f_embed_dim+1+(1+g_embed_dim)*(i+1), 0],
-                             np.zeros((f_embed_dim-g_embed_dim))))
-        y1=np.array([(coef[j] * x ** j) for j in range(coef.size)]).sum(axis=0)
-        # y2=np.array([(train_coef[i,j] * x ** j) for j in range(train_coef.shape[1])]).sum(axis=0)
-        y2=np.array([(train_coef[i,j] * weird[j](x)) for j in range(train_coef.shape[1])]).sum(axis=0)
+        plt.tight_layout()
+        f_coef=result[0][:f_embed_dim+1, 0]
+        # f=np.array([(f_coef[j] * x ** j) for j in range(f_coef.size)]).sum(axis=0)
+        # plt.plot(x, f, label="f")
 
-        plt.plot(x,y1)
-        plt.plot(x,y2)
+        g_coef=result[0][f_embed_dim+1+ (1+g_embed_dim)*i: f_embed_dim+1+(1+g_embed_dim)*(i+1), 0]
+        # g=np.array([(g_coef[j] * x ** j) for j in range(g_coef.size)]).sum(axis=0)
+        # plt.plot(x, g, label="g")
+
+        coef=f_coef+np.concatenate((g_coef, np.zeros(f_embed_dim-g_embed_dim)))
+        trained=np.array([(coef[j] * x ** j) for j in range(coef.size)]).sum(axis=0)
+        plt.plot(x,trained, label="trained")
+
+        actual=np.array([(train_coef[i,j] * weird[j](x)) for j in range(train_coef.shape[1])]).sum(axis=0)
+        plt.plot(x,actual, label="actual")
+        plt.scatter(train_dataset[0][i], train_dataset[1][i], c="g", label="actual")
+        plt.title("train_coef="+str(train_coef[i])+
+                  " f="+str (f_coef.round(decimals=2))+
+                  " g="+str (g_coef.round(decimals=3))+
+                  " R^2="+str (((actual-trained)**2).mean()),
+                  wrap=True, fontsize=7)
+        plt.legend()
         plt.show()
 
+    plt.tight_layout()
+    f_coef=result[0][:f_embed_dim+1, 0]
+    # f=np.array([(f_coef[j] * x ** j) for j in range(f_coef.size)]).sum(axis=0)
+    # plt.plot(x, f, label="f")
+
+    g_coef=result[0][f_embed_dim+1+ (1+g_embed_dim)*num_domains:, 0]
+    # g=np.array([(g_coef[j] * x ** j) for j in range(g_coef.size)]).sum(axis=0)
+    # plt.plot(x, g, label="g")
+
+    coef=f_coef+np.concatenate((g_coef, np.zeros(f_embed_dim-g_embed_dim)))
+    trained=np.array([(coef[j] * x ** j) for j in range(coef.size)]).sum(axis=0)
+    plt.plot(x,trained, label="trained")
+
+    actual=np.array([(val_coef[j] * weird[j](x)) for j in range(val_coef.shape[0])]).sum(axis=0)
+    plt.plot(x,actual, label="actual")
+    plt.scatter(val_dataset[0], val_dataset[1], c="g", label="actual")
+    plt.title("train_coef=" + str(train_coef[i]) +
+              " f=" + str(f_coef.round(decimals=2)) +
+              " g=" + str(g_coef.round(decimals=3)) +
+              " R^2=" + str(((actual - trained) ** 2).mean()),
+              wrap=True, fontsize=7)
+    plt.legend()
+    plt.show()
+
+    print(result[0], result [1], result [2])
 
     #deg 6 error [7.56572675e-27]
     #deg 7, error [1.19885257e-05]

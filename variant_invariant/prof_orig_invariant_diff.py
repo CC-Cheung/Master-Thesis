@@ -25,36 +25,54 @@ import glob
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-def make_weird_data(num_domains, num_points, coef):
-    x=np.random.rand(num_domains, num_points, in_dim)
-    x_transpose=x.transpose(2, 1, 0)
-    y=(coef[:,0] * np.e ** x_transpose + \
-      coef[:,1] * x_transpose ** 2 + \
-      coef[:,2] * np.sin(10 * x_transpose))\
-        .transpose(2, 1, 0)
+def make_weird_data(num_domains, num_points):
+    full=np.random.rand(num_domains, 2, in_dim)
+    for i in range(num_points):
+        full=np.concatenate((full,(full[:, i:i+1]-full[:, i+1:i+2]+0.5)/2+np.sin(i)), axis=1)
+
+    x=full[:, :num_points]
+    y=full[:,2:]
     #coef will be num_domain, 3
     #y will be num_domains, num_points, out_dim=1
     x=torch.Tensor(x)
     y=torch.Tensor(y)
     result=[]
     for i in range(num_domains):
-        result.append(x[i, :, :])
-        result.append(y[i, :, :])
+        result.append(x[i:i+1, :, :])
+        result.append(y[i:i+1, :, :])
     #[(num_points, in_dim), num_points(out_dim)]
     return result
 
-def make_weird_data_val(num_points, coef):
-    x=np.random.rand(num_points, in_dim)
+# def make_weird_data(num_domains, num_points, coef):
+#     x=np.random.rand(num_domains, num_points, in_dim)
+#     x_transpose=x.transpose(2, 1, 0)
+#     y=(coef[:,0] * np.e ** x_transpose + \
+#       coef[:,1] * x_transpose ** 2 + \
+#       coef[:,2] * np.sin(10 * x_transpose))\
+#         .transpose(2, 1, 0)
+#     #coef will be num_domain, 3
+#     #y will be num_domains, num_points, out_dim=1
+#     x=torch.Tensor(x)
+#     y=torch.Tensor(y)
+#     result=[]
+#     for i in range(num_domains):
+#         result.append(x[i, :, :])
+#         result.append(y[i, :, :])
+#     #[(num_points, in_dim), num_points(out_dim)]
+#     return result
+def make_weird_data_val(num_points):
+    full=np.random.rand(num_points, in_dim)
+    for i in range(num_points):
+        full = np.concatenate((full,full[i:i+1]+full[ i+1:i+2]-full[0:1]))
 
-    y=(coef[0]*np.e**x+ \
-      coef[1] *x**2 + \
-      coef[2]*np.sin(10*x)).sum(axis=0)\
+    x = full[:num_points - 2]
+    y = full[ 2:]
 
     #coef will be 3
     #y will be num_points, out_dim=1
 
-    x=torch.Tensor(x)
-    y=torch.Tensor(y)
+    x=torch.Tensor(x).unsqueeze(dim=0)
+    y=torch.Tensor(y).unsqueeze(dim=0)
     return x,y
 class linear_relu(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, depth):
@@ -98,11 +116,11 @@ class linear(nn.Module):
 
 
 class TrainInvariant(pl.LightningModule):
-    def __init__(self, in_dim, f_embed_dim, g_embed_dim, out_dim, num_domains):
+    def __init__(self, in_dim, f_embed_dim,  g_embed_dim, out_dim, num_domains):
         super().__init__()
-        self.invariant=linear_elu(in_dim, f_embed_dim, out_dim, 2)
-        self.train_variants=nn.ModuleList([linear_elu(in_dim, g_embed_dim, out_dim, 2) for i in range (num_domains)])
-        self.test_variant=linear_elu(in_dim, g_embed_dim, out_dim,2)
+        self.invariant=nn.LSTM(in_dim, hidden_size=f_embed_dim, num_layers=2, proj_size=out_dim, batch_first=True)
+        self.train_variants=nn.ModuleList([nn.LSTM(in_dim, hidden_size=g_embed_dim, num_layers=2, proj_size=out_dim,batch_first=True)for i in range (num_domains)])
+        self.test_variant=nn.LSTM(in_dim, hidden_size=g_embed_dim, num_layers=2, proj_size=out_dim, batch_first=True)
         self.num_domains=num_domains
         self.eta=lambda x,y: x+y
 
@@ -111,7 +129,7 @@ class TrainInvariant(pl.LightningModule):
         result_f = self.invariant(x)
         result_g =self.train_variants[domain_num](x)
 
-        return self.eta(result_f, result_g)
+        return self.eta(result_f[0], result_g[0])
 
     def training_step(self, batch, batch_idx):
         # training_step defines the train loop.
@@ -161,32 +179,28 @@ if __name__=="__main__":
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
     num_domains=10
 
-    train_coef = np.array([[1, 0, 1],[0, 1, 1], [1, 1, 0], [0.5, 0.5, 0.5],[0.25, 0.25, 0.25]])
-    train_coef = np.random.normal(loc=1, scale=0.2, size=(num_domains, 3))
-
 
     val_coef = np.array([0.8, 0.1, .2])
-    num_points = 100
-    num_domains = train_coef.shape[0]
-    f_embed_dim = 8
-    g_embed_dim=2
+    num_points = 50
+    f_embed_dim = 20
+    g_embed_dim=10
+    # f_layers=2
+    # g_layers=2
     max_epoch=1600
 
-    train_dataset = TensorDataset(*make_weird_data(num_domains, num_points,train_coef))
-    val_dataset = TensorDataset(*make_weird_data(num_domains, num_points,train_coef))
+    train_dataset = TensorDataset(*make_weird_data(num_domains, num_points,))
+    val_dataset = TensorDataset(*make_weird_data(num_domains, num_points,))
 
     # train_dataset = TensorDataset(*make_quad_data_val(num_val_io_pairs, val_coef))
     # val_dataset = TensorDataset(*make_quad_data_val(num_points, val_coef))
 
     train_loader = DataLoader(train_dataset, batch_size=20, shuffle=True)
     val_loader = DataLoader(val_dataset,batch_size=20)
-
-
+    # val_loader=train_loader
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
     wandb_logger=WandbLogger(project="DA Thesis", name="trash",log_model="True")
     wandb.init() ########################################################
-    wandb_logger.experiment.config.update({"train_coef": train_coef,
-                                           "val_coef": val_coef,
+    wandb_logger.experiment.config.update({
                                            "num_points": num_points,
                                            "num_domains": num_domains,
                                            "f_embed_dim":f_embed_dim,
@@ -201,9 +215,13 @@ if __name__=="__main__":
     #                                                  g_embed_dim=g_embed_dim,
     #                                                  out_dim=out_dim,
     #                                                  num_domains=1)
-    # base_trans = DoubleTrans.load_from_checkpoint("epoch=2999-step=15000.ckpt",
-    #                                                 in_dim=in_dim + out_dim, embed_dim=embed_dim, out_dim=3,
-    #                                                 num_heads=num_heads)
+    # base_trans = TrainInvariant.load_from_checkpoint("epoch=483-step=484.ckpt",
+    #                                                 in_dim=in_dim,
+    #                                                  f_embed_dim=f_embed_dim,
+    #                                                  g_embed_dim=g_embed_dim,
+    #                                                  out_dim=out_dim,
+    #                                                  num_domains=num_domains)
+
 
     wandb_logger.watch(base_trans, log="all")
 
@@ -220,7 +238,7 @@ if __name__=="__main__":
                                      # small_error_callback
                                      # model_checkpoint
                                      ],
-                    #   fast_dev_run=True
+                      # fast_dev_run=True
                       )
     # trainer2 = pl.Trainer(limit_train_batches=100,
     #                  logger=tb_logger,

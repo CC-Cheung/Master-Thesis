@@ -26,7 +26,6 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 def make_quad_data(num_domains, num_points, coef):
-#make double range
     x=np.random.rand(num_domains, num_points, in_dim)
     x_transpose=x.transpose(2, 1, 0)
     #coef num_domains, powers
@@ -233,16 +232,16 @@ if __name__=="__main__":
     #Zeroing f
     # base_trans.invariant.weight.data.fill_(0.00)
     # base_trans.invariant.bias.data.fill_(0.00)
-    base_trans.invariant.weight.data=torch.tensor([[-18.95, 73.5, -105,50,1,0]])
-    base_trans.invariant.bias.data=torch.tensor([1.26])
+    # base_trans.invariant.weight.data=torch.tensor([[-18.95, 73.5, -105,50,1,0]])
+    # base_trans.invariant.bias.data=torch.tensor([1.26])
     # for param in base_trans.invariant.parameters():
     #     param.requires_grad = False
     # base_trans.invariant.eval()
-    base_trans.train_variants[0].weight.data.fill_(0.00)
-    base_trans.train_variants[0].bias.data.fill_(0.00)
-    for param in base_trans.train_variants[0].parameters():
-        param.requires_grad = False
-    base_trans.train_variants[0].eval()
+    # base_trans.train_variants[0].weight.data.fill_(0.00)
+    # base_trans.train_variants[0].bias.data.fill_(0.00)
+    # for param in base_trans.train_variants[0].parameters():
+    #     param.requires_grad = False
+    # base_trans.train_variants[0].eval()
     #
     # base_trans.invariant.weight.data=torch.tensor([[0,0.0,1,1,0,0]])
     # base_trans.invariant.bias.data=torch.tensor([0.0])
@@ -264,7 +263,7 @@ if __name__=="__main__":
                           callbacks=[early_stop_callback,
                                      # model_checkpoint
                                      ],
-                      # fast_dev_run=True
+                      fast_dev_run=True
                       )
 
 

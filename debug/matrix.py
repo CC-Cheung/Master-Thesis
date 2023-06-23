@@ -88,25 +88,25 @@ if __name__=="__main__":
 
     f_embed_dim = 6
     g_embed_dim = 2
-    num_domains = 2
+    num_domains = 10
     gen_deg=4
 
     # train_coef = np.array([[1, -18.95, 73.5, 20,50,10,1],
     #                        [1.26, 0, 15, 0,50,10,1],
     #                        [26, -95, .5, 0,50,10,1]])
 
-    train_coef = np.array([[1.5, -1, 1],
-                         [1, -1.5, 1],
-                           [1, -1, 1.5]])
+    # train_coef = np.array([[1.5, -1, 1],
+    #                      [1, -1.5, 1],
+    #                        [1, -1, 1.5]])
     # train_coef = np.concatenate((np.random.rand(num_domains,g_embed_dim+1),
     #                              np.random.normal(loc=1, scale=0.1, size=(num_domains, gen_deg-g_embed_dim))), axis=1)
-    # train_coef = np.random.normal(loc=1, scale=0.2, size=(num_domains, 3))
-    val_coef=np.array([1, 0, 0])
+    train_coef = np.random.normal(loc=1, scale=0.2, size=(num_domains, 3))
+    val_coef=np.random.normal(loc=1, scale=0.2, size=(3))
 
     num_domains = train_coef.shape[0]
 
-    num_points = 100
-    num_val_io=8
+    num_points = 10
+    num_val_io=17
 
 
     # train_dataset = make_quad_data(num_domains, num_points,train_coef)
@@ -155,33 +155,33 @@ if __name__=="__main__":
     b=np.concatenate((train_dataset[1].reshape((-1, in_dim)), val_dataset[1]))
 
     result=np.linalg.lstsq(a,b)
-    x=np.arange(0,1,0.05)
+    x=np.arange(0,1.05,0.05)
     weird=[lambda x: np.e**x, lambda x:x**2, lambda x:np.sin(10*x)]
 
-    for i in range(num_domains):
-        plt.tight_layout()
-        f_coef=result[0][:f_embed_dim+1, 0]
-        # f=np.array([(f_coef[j] * x ** j) for j in range(f_coef.size)]).sum(axis=0)
-        # plt.plot(x, f, label="f")
-
-        g_coef=result[0][f_embed_dim+1+ (1+g_embed_dim)*i: f_embed_dim+1+(1+g_embed_dim)*(i+1), 0]
-        # g=np.array([(g_coef[j] * x ** j) for j in range(g_coef.size)]).sum(axis=0)
-        # plt.plot(x, g, label="g")
-
-        coef=f_coef+np.concatenate((g_coef, np.zeros(f_embed_dim-g_embed_dim)))
-        trained=np.array([(coef[j] * x ** j) for j in range(coef.size)]).sum(axis=0)
-        plt.plot(x,trained, label="trained")
-
-        actual=np.array([(train_coef[i,j] * weird[j](x)) for j in range(train_coef.shape[1])]).sum(axis=0)
-        plt.plot(x,actual, label="actual")
-        plt.scatter(train_dataset[0][i], train_dataset[1][i], c="g", label="actual")
-        plt.title("train_coef="+str(train_coef[i])+
-                  " f="+str (f_coef.round(decimals=2))+
-                  " g="+str (g_coef.round(decimals=3))+
-                  " R^2="+str (((actual-trained)**2).mean()),
-                  wrap=True, fontsize=7)
-        plt.legend()
-        plt.show()
+    # for i in range(num_domains):
+    #     plt.tight_layout()
+    #     f_coef=result[0][:f_embed_dim+1, 0]
+    #     # f=np.array([(f_coef[j] * x ** j) for j in range(f_coef.size)]).sum(axis=0)
+    #     # plt.plot(x, f, label="f")
+    #
+    #     g_coef=result[0][f_embed_dim+1+ (1+g_embed_dim)*i: f_embed_dim+1+(1+g_embed_dim)*(i+1), 0]
+    #     # g=np.array([(g_coef[j] * x ** j) for j in range(g_coef.size)]).sum(axis=0)
+    #     # plt.plot(x, g, label="g")
+    #
+    #     coef=f_coef+np.concatenate((g_coef, np.zeros(f_embed_dim-g_embed_dim)))
+    #     trained=np.array([(coef[j] * x ** j) for j in range(coef.size)]).sum(axis=0)
+    #     plt.plot(x,trained, label="trained")
+    #
+    #     actual=np.array([(train_coef[i,j] * weird[j](x)) for j in range(train_coef.shape[1])]).sum(axis=0)
+    #     plt.plot(x,actual, label="actual")
+    #     plt.scatter(train_dataset[0][i], train_dataset[1][i], c="g", label="actual")
+    #     plt.title("train_coef="+str(train_coef[i])+
+    #               " f="+str (f_coef.round(decimals=2))+
+    #               " g="+str (g_coef.round(decimals=3))+
+    #               " R^2="+str (((actual-trained)**2).mean()),
+    #               wrap=True, fontsize=7)
+    #     plt.legend()
+    #     plt.show()
 
     plt.tight_layout()
     f_coef=result[0][:f_embed_dim+1, 0]
@@ -199,7 +199,7 @@ if __name__=="__main__":
     actual=np.array([(val_coef[j] * weird[j](x)) for j in range(val_coef.shape[0])]).sum(axis=0)
     plt.plot(x,actual, label="actual")
     plt.scatter(val_dataset[0], val_dataset[1], c="g", label="actual")
-    plt.title("train_coef=" + str(train_coef[i]) +
+    plt.title("train_coef=" + str(val_coef) +
               " f=" + str(f_coef.round(decimals=2)) +
               " g=" + str(g_coef.round(decimals=3)) +
               " R^2=" + str(((actual - trained) ** 2).mean()),
@@ -207,6 +207,54 @@ if __name__=="__main__":
     plt.legend()
     plt.show()
 
+
+
+
+    # power, num_points, in_dim
+
+    f_portion_of_a = powers_f_val \
+        .squeeze(axis=-1) \
+        .transpose((1, 0)) \
+    # num_points, power (in dim=1)
+
+    g_portion_of_a = powers_g_val.squeeze(axis=-1).transpose((1, 0))
+    # num_points, power,  (in dim was 1)
+
+    # a = np.concatenate((f_portion_of_a, g_portion_of_a), axis=1)
+    a=f_portion_of_a
+
+    b = np.concatenate(val_dataset[1].reshape((1,-1)))
+
+    result = np.linalg.lstsq(a, b)
+    plt.tight_layout()
+    f_coef = result[0][:f_embed_dim + 1]
+    # f=np.array([(f_coef[j] * x ** j) for j in range(f_coef.size)]).sum(axis=0)
+    # plt.plot(x, f, label="f")
+
+    # g_coef = result[0][f_embed_dim + 1 :]
+    # g=np.array([(g_coef[j] * x ** j) for j in range(g_coef.size)]).sum(axis=0)
+    # plt.plot(x, g, label="g")
+
+    coef = f_coef
+    trained = np.array([(coef[j] * x ** j) for j in range(coef.size)]).sum(axis=0)
+    plt.plot(x, trained, label="trained")
+
+    actual = np.array([(val_coef[j] * weird[j](x)) for j in range(val_coef.shape[0])]).sum(axis=0)
+    plt.plot(x, actual, label="actual")
+    plt.scatter(val_dataset[0], val_dataset[1], c="g", label="actual")
+    plt.title("train_coef=" + str(val_coef) +
+              " f=" + str(f_coef.round(decimals=2)) +
+              " g=" + str(g_coef.round(decimals=3)) +
+              " R^2=" + str(((actual - trained) ** 2).mean()),
+              wrap=True, fontsize=7)
+    plt.legend()
+    plt.show()
+
+    for i in range (100):
+        coef=np.random.normal(loc=1, scale=0.2, size=(3))
+        y=np.array([(coef[j] * weird[j](x)) for j in range(coef.shape[0])]).sum(axis=0)
+        plt.plot(x,y, 'b', linewidth=0.2)
+    plt.show()
     print(result[0], result [1], result [2])
 
     #deg 6 error [7.56572675e-27]

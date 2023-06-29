@@ -25,23 +25,7 @@ import glob
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-def make_weird_data(num_domains, num_points):
-    full=np.random.rand(num_domains, 2, in_dim)
-    for i in range(num_points):
-        full=np.concatenate((full,(full[:, i:i+1]-full[:, i+1:i+2]+0.5)/2+np.sin(i)), axis=1)
 
-    x=full[:, :num_points]
-    y=full[:,2:]
-    #coef will be num_domain, 3
-    #y will be num_domains, num_points, out_dim=1
-    x=torch.Tensor(x)
-    y=torch.Tensor(y)
-    result=[]
-    for i in range(num_domains):
-        result.append(x[i:i+1, :, :])
-        result.append(y[i:i+1, :, :])
-    #[(1, num_points, in_dim), num_points(1, out_dim)]
-    return result
 def make_weird_data_val(num_points, coef):
     full=coef
     for i in range(num_points):
@@ -91,12 +75,6 @@ class linear(nn.Module):
         self.net=nn.Sequential(*self.net)
     def forward(self, x):
         return self.net(x)
-# class reshape_linear_relu(linear_relu):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__( *args, **kwargs)
-#     def forward(self, x):
-#         shape=x.shape
-#         return self.net(x.reshape(shape[0]*shape[1], shape [2])).reshape(shape[0], shape[1], -1)
 
 
 
@@ -192,7 +170,7 @@ if __name__=="__main__":
     #                                             in_dim=in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
 
 
-    base_trans = TestInvariant.load_from_checkpoint(os.path.dirname(__file__)+"/epoch=1599-step=1600.ckpt",
+    base_trans = TestInvariant.load_from_checkpoint(os.path.dirname(__file__)+"/variant.ckpt",
                                                     in_dim=in_dim, f_embed_dim=f_embed_dim,
                                                     g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=10)    #
     # for param in base_trans.invariant.parameters():

@@ -43,29 +43,12 @@ def make_weird_data(num_domains, num_points):
     #[(num_points, in_dim), num_points(out_dim)]
     return result
 
-# def make_weird_data(num_domains, num_points, coef):
-#     x=np.random.rand(num_domains, num_points, in_dim)
-#     x_transpose=x.transpose(2, 1, 0)
-#     y=(coef[:,0] * np.e ** x_transpose + \
-#       coef[:,1] * x_transpose ** 2 + \
-#       coef[:,2] * np.sin(10 * x_transpose))\
-#         .transpose(2, 1, 0)
-#     #coef will be num_domain, 3
-#     #y will be num_domains, num_points, out_dim=1
-#     x=torch.Tensor(x)
-#     y=torch.Tensor(y)
-#     result=[]
-#     for i in range(num_domains):
-#         result.append(x[i, :, :])
-#         result.append(y[i, :, :])
-#     #[(num_points, in_dim), num_points(out_dim)]
-#     return result
 def make_weird_data_val(num_points):
     full=np.random.rand(num_points, in_dim)
     for i in range(num_points):
-        full = np.concatenate((full,full[i:i+1]+full[ i+1:i+2]-full[0:1]))
+        full=np.concatenate((full,(full[:, i:i+1]-full[:, i+1:i+2]+0.5)/2+np.sin(i)), axis=1)
 
-    x = full[:num_points - 2]
+    x = full[:num_points]
     y = full[ 2:]
 
     #coef will be 3

@@ -10,80 +10,30 @@ Original file is located at
 
 import os
 import torch
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.callbacks import EarlyStopping
 
 import wandb
 from torch import optim, nn, utils, Tensor
-from torchvision.datasets import MNIST
-from torchvision.transforms import ToTensor
+
 import pytorch_lightning as pl
 import numpy as np
 from torch.utils.data import TensorDataset, DataLoader
 from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.loggers import WandbLogger
 import glob
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from scipy.integrate import odeint
+import StormReactor
 
-
-def z_derivatives(x, t, g,h,b, input):
-    return [x[1]-input, -(1 / x[0]) * (x[1] ** 2 + b * x[1] + g * x[0] - g * h)]
-def input_func(input,t, duration):
-    return 0.1 * np.sin(2 * np.pi / duration * input* t)
-
-
-
-def make_water_data(num_domains, num_points):
-
-    g = np.random.normal(9.81, 1,num_domains)  # m/s^2
-    h = np.random.normal(0.1, 0.01,num_domains) # m
-    b = np.random.normal(0.25,0.025,num_domains)   # m/s
-    input = np.random.normal(2,0.5, num_domains)   # m/s
-
-    # g = np.ones(num_domains) *9.81 # m/s^2
-    # h = np.ones(num_domains) *0.1  # m
-    # b = np.ones(num_domains) *0.25  # m/s
-    # input = np.ones(num_domains)*2
-
-
-    #solve=time=numpoints+1
-
-    start=0
-    end=3
-    duration=end-start
-    time = np.arange(start, end, duration/(num_points+1))
-    full=np.zeros((num_domains, num_points+1, 2))
-
-    # full=np.random.rand(num_domains, num_points+1, in_dim)
-    full[:, 0, 0]=2e-3
-    for i in range(num_domains):
-        def gen_func(x, t):
-            return z_derivatives(x, t, g[i], h[i], b[i], input_func(input[i],t,duration))
-
-        temp= odeint(gen_func, full[i,0, :], time
-                     ) #temp[:,0]=pos
-        full[i]=temp[np.newaxis,:]
+def make_weird_data(num_domains, num_points):
+    full=np.random.rand(num_domains, 2, in_dim)
+    for i in range(num_points):
+        full=np.concatenate((full,(full[:, i:i+1]-full[:, i+1:i+2]+0.5)/2+np.sin(i)), axis=1)
 
     x=full[:, :num_points]
-    y=full[:,1:]
+    y=full[:,2:]
     #coef will be num_domain, 3
     #y will be num_domains, num_points, out_dim=1
-
+    x=torch.Tensor(x)
     y=torch.Tensor(y)
-
-    x=torch.Tensor(
-        np.concatenate(
-            (x,
-             input_func(input.reshape((-1,1)),
-                        time[:-1].reshape((1,-1)),
-                        duration)[:, :,np.newaxis]), axis=-1))
-    x = torch.Tensor(input_func(
-                        input.reshape((-1, 1)),
-                        time[:-1].reshape((1, -1)),
-                        duration)[:, :,np.newaxis])
-    #y num_domain, num_points, in_dim, input num_domain, time num_points+1
-
     result=[]
     for i in range(num_domains):
         result.append(x[i:i+1, :, :])
@@ -91,7 +41,20 @@ def make_water_data(num_domains, num_points):
     #[(num_points, in_dim), num_points(out_dim)]
     return result
 
+def make_weird_data_val(num_points):
+    full=np.random.rand(num_points, in_dim)
+    for i in range(num_points):
+        full=np.concatenate((full,(full[:, i:i+1]-full[:, i+1:i+2]+0.5)/2+np.sin(i)), axis=1)
 
+    x = full[:num_points]
+    y = full[ 2:]
+
+    #coef will be 3
+    #y will be num_points, out_dim=1
+
+    x=torch.Tensor(x).unsqueeze(dim=0)
+    y=torch.Tensor(y).unsqueeze(dim=0)
+    return x,y
 class linear_relu(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, depth):
         super().__init__()
@@ -189,7 +152,7 @@ if __name__=="__main__":
 
 
     in_dim = 1
-    out_dim = 2
+    out_dim = 1
     np.random.seed(0)
     torch.use_deterministic_algorithms(True)
     torch.manual_seed(0)
@@ -199,15 +162,15 @@ if __name__=="__main__":
 
 
     val_coef = np.array([0.8, 0.1, .2])
-    num_points = 200
-    f_embed_dim = 50
+    num_points = 50
+    f_embed_dim = 20
     g_embed_dim=10
     # f_layers=2
     # g_layers=2
-    max_epoch=1000
+    max_epoch=1600
 
-    train_dataset = TensorDataset(*make_water_data(num_domains, num_points,))
-    val_dataset = TensorDataset(*make_water_data(num_domains, num_points,))
+    train_dataset = TensorDataset(*make_weird_data(num_domains, num_points,))
+    val_dataset = TensorDataset(*make_weird_data(num_domains, num_points,))
 
     # train_dataset = TensorDataset(*make_quad_data_val(num_val_io_pairs, val_coef))
     # val_dataset = TensorDataset(*make_quad_data_val(num_points, val_coef))
@@ -229,10 +192,10 @@ if __name__=="__main__":
     base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
 
 
-    # base_trans = TrainInvariant.load_from_checkpoint(get_latest_file(),in_dim=in_dim, f_embed_dim=f_embed_dim,
+    # base_trans = TrainInvariant.load_from_checkpoint(get_latest_file(),in_dim, f_embed_dim=f_embed_dim,
     #                                                  g_embed_dim=g_embed_dim,
     #                                                  out_dim=out_dim,
-    #                                                  num_domains=num_domains)
+    #                                                  num_domains=1)
     # base_trans = TrainInvariant.load_from_checkpoint("epoch=483-step=484.ckpt",
     #                                                 in_dim=in_dim,
     #                                                  f_embed_dim=f_embed_dim,
@@ -243,36 +206,22 @@ if __name__=="__main__":
 
     wandb_logger.watch(base_trans, log="all")
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0, patience=50)
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.0001, patience=200)
     # small_error_callback = EarlyStopping(monitor="val_loss", stopping_threshold=0.02)
-    model_callback = ModelCheckpoint(
-        save_top_k=1,
-        monitor="val_loss",
-        mode="min",
 
-    )
     trainer1 = pl.Trainer(limit_train_batches=100,
                           logger=wandb_logger,
                           max_epochs=max_epoch,
                           # log_every_n_steps = 5,
                           accelerator="gpu", devices=1,
                           callbacks=[
-                              model_callback,
                               early_stop_callback,
                                      # small_error_callback
                                      # model_checkpoint
                                      ],
                       # fast_dev_run=True
                       )
-    # trainer2 = pl.Trainer(limit_train_batches=100,
-    #                  logger=tb_logger,
-    #                   max_epochs=2400,
-    #                   log_every_n_steps = 1,
-    # accelerator = "gpu", devices = 1,
-    #
-    # # fast_dev_run=True
-    #
-    #                   )
+
 
 
     #

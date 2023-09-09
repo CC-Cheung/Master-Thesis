@@ -10,21 +10,18 @@ Original file is located at
 
 import os
 import torch
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.callbacks import EarlyStopping
 
 import wandb
 from torch import optim, nn, utils, Tensor
-from torchvision.datasets import MNIST
-from torchvision.transforms import ToTensor
+
 import pytorch_lightning as pl
 import numpy as np
 from torch.utils.data import TensorDataset, DataLoader
 from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.loggers import WandbLogger
 import glob
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from scipy.integrate import odeint
+import StormReactor
 
 
 def make_weird_data_val(num_points, coef):
@@ -40,43 +37,6 @@ def make_weird_data_val(num_points, coef):
 
     x = torch.Tensor(x).unsqueeze(dim=0)
     y = torch.Tensor(y).unsqueeze(dim=0)
-    return x,y
-def z_derivatives(x, t, g,h,b, input):
-    return [x[1]-input, -(1 / x[0]) * (x[1] ** 2 + b * x[1] + g * x[0] - g * h)]
-def input_func(input,t, duration):
-    return 0.1 * np.sin(2 * np.pi / duration * input* t)
-def make_water_data_val(num_points, start=0, end=3):
-    duration=end-start
-    time = np.arange(start, end, duration/(num_points+1))
-    full=np.zeros((num_points+1, 2))
-
-    # full=np.random.rand(num_domains, num_points+1, in_dim)
-    full[0, 0]=2e-3
-    def gen_func(x, t):
-        return z_derivatives(x, t, g, h, b, input_func(input,t,3))
-
-    temp= odeint(gen_func, full[0, :], time)
-    full=temp[np.newaxis,:]
-    #full 1, num_points+1,2 (1 because one domain, batch first)
-
-    x=full[:, :num_points]
-    y=full[:,1:]
-    #x,y will be 1, num_points, out_dim=1
-
-    y=torch.Tensor(y)
-
-    # x=torch.Tensor(
-    #     np.concatenate(
-    #         (x,
-    #          input_func(input.reshape((-1,1)),
-    #                     time[:-1].reshape((1,-1)),
-    #                     duration)[:, :,np.newaxis]), axis=-1))
-    x = torch.Tensor(input_func(
-                        input,
-                        time[:-1].reshape((1, -1)),
-                        3)[:, :,np.newaxis])
-    #y num_domain, num_points, in_dim, input num_domain, time num_points+1
-
     return x,y
 class linear_relu(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, depth):
@@ -161,33 +121,27 @@ def get_latest_file():
 if __name__=="__main__":
     # define any number of nn.Modules (or use your current ones)
     in_dim = 1
-    out_dim = 2
-
+    out_dim = 1
+    depth = 2
     np.random.seed(0)
     torch.use_deterministic_algorithms(True)
     torch.manual_seed(0)
+
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
 
-    # input = np.random.normal(2,0.5,)   # m/s
-    # g = np.random.normal(9.81, 1)  # m/s^2
-    # h = np.random.normal(0.1, 0.01)  # m
-    # b = np.random.normal(0.25, 0.025)  # m/s
-    input = np.random.normal(2, 1, )  # m/s
-    g = np.random.normal(9.81, 2)  # m/s^2
-    h = np.random.normal(0.1, 0.02)  # m
-    b = np.random.normal(0.25, 0.05)  # m/s
+    val_coef = np.random.rand(2, in_dim)
 
-    num_points = 200
-    num_val_io_pairs=100
-    f_embed_dim = 50
+    num_points = 50
+    num_val_io_pairs=10
+    f_embed_dim = 20
     g_embed_dim=10
-    max_epoch=3000
+    max_epoch=1500
 
     # train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
     # val_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
 
-    train_dataset = TensorDataset(*make_water_data_val(num_val_io_pairs, end=3/(num_points+1)*(num_val_io_pairs+1)))
-    val_dataset = TensorDataset(*make_water_data_val(num_points))
+    train_dataset = TensorDataset(*make_weird_data_val(num_val_io_pairs, val_coef))
+    val_dataset = TensorDataset(*make_weird_data_val(num_points,val_coef))
 
     train_loader = DataLoader(train_dataset, batch_size=20, shuffle=True)
     val_loader = DataLoader(val_dataset,batch_size=20)
@@ -197,7 +151,7 @@ if __name__=="__main__":
     wandb_logger=WandbLogger(project="DA Thesis", name="trash",log_model="True")
     wandb.init() ########################################################
     wandb_logger.experiment.config.update({
-                                           "input, g,h,b": (input, g,h,b ),
+                                           "val_coef": val_coef,
                                            "num_points": num_points,
 
                                            "f_embed_dim":f_embed_dim,
@@ -224,21 +178,15 @@ if __name__=="__main__":
 
     wandb_logger.watch(base_trans, log="all")
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=500)
-    model_callback = ModelCheckpoint(
-        save_top_k=1,
-        monitor="val_loss",
-        mode="min",
+    # early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=300)
 
-    )
     trainer1 = pl.Trainer(limit_train_batches=100,
                           logger=wandb_logger,
                           max_epochs=max_epoch,
                           # log_every_n_steps = 5,
                           accelerator="gpu", devices=1,
                           callbacks=[
-                              model_callback,
-                              early_stop_callback,
+                              # early_stop_callback,
                                      # model_checkpoint
                                      ],
                     #   fast_dev_run=True

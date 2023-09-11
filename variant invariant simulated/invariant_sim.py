@@ -32,7 +32,9 @@ import pandas as pd
 
 
 def make_water_data(raw, data_length, drop_columns):
-    df_raw = [pd.read_csv(name).drop(drop_columns,1) for name in raw]
+    # df_raw = [pd.read_csv(name).drop(drop_columns,1) for name in raw]
+    df_raw = [pd.read_csv(name).loc[:,["rain_t_2", "s_t_2.1.nsteps."]] for name in raw]
+
     all_domains=pd.concat(df_raw,axis=0)
     mean=all_domains.mean(axis=0)
     std=all_domains.std(axis=0)
@@ -40,9 +42,12 @@ def make_water_data(raw, data_length, drop_columns):
         normalized_domain=((domain - mean) / std).values
 
 
-        temp=[(normalized_domain[i:i+data_length, 0:1], normalized_domain[i:i+data_length, 1:])
-         for i in range(0, len(domain), data_length)]
-        return [torch.tensor(i).float() for i in list(zip(*temp))]
+        # temp=[(normalized_domain[i:i+data_length, 0:1], normalized_domain[i:i+data_length, 1:])
+        #  for i in range(0, len(domain), data_length)]
+        # return [torch.tensor(i).float() for i in list(zip(*temp))]
+        temp=np.array([normalized_domain[i:i+data_length]
+         for i in range(0, len(domain), data_length)])
+        return torch.tensor(temp).float()
 
 
     # x=full[:, :num_points]
@@ -72,7 +77,7 @@ def make_water_data(raw, data_length, drop_columns):
     # return result
 
 
-class linear_relu(nn.Module):
+class LinearRelu(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, depth):
         super().__init__()
         self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim), nn.ReLU()])
@@ -84,7 +89,7 @@ class linear_relu(nn.Module):
         self.net=nn.Sequential(*self.net)
     def forward(self, x):
         return self.net(x)
-class linear_elu(nn.Module):
+class LinearElu(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, depth):
         super().__init__()
         self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim), nn.ELU()])
@@ -96,7 +101,7 @@ class linear_elu(nn.Module):
         self.net=nn.Sequential(*self.net)
     def forward(self, x):
         return self.net(x)
-class linear(nn.Module):
+class Linear(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, depth):
         super().__init__()
         self.net = nn.ModuleList([nn.Linear(in_dim, hidden_dim)])
@@ -108,17 +113,28 @@ class linear(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+class SequenceModule(nn.Module):
+    def __init__(self, in_dim, seq_hidden_dim, init_hidden_dim, out_dim, depth=3):
+        super().__init__()
+        self.num_layers=2
+        self.seq_hidden_dim=seq_hidden_dim
+        self.in_dim=in_dim
+        self.out_dim=out_dim
+        self.lstm=nn.LSTM(in_dim, hidden_size=seq_hidden_dim, num_layers=self.num_layers, proj_size=out_dim, batch_first=True)
+        self.mlp=LinearElu(in_dim+out_dim, init_hidden_dim, self.num_layers*out_dim, depth)
 
-
-
+    def forward(self, x):
+        init=self.mlp(x[:, :1]).reshape(self.num_layers, x.shape[0], self.out_dim)
+        return self.lstm(x[:,:,:self.in_dim], (init,torch.zeros(self.num_layers,x.shape[0],self.seq_hidden_dim).to("cuda")))
 
 
 class TrainInvariant(pl.LightningModule):
     def __init__(self, in_dim, f_embed_dim,  g_embed_dim, out_dim, num_domains):
         super().__init__()
-        self.invariant=nn.LSTM(in_dim, hidden_size=f_embed_dim, num_layers=2, proj_size=out_dim, batch_first=True)
-        self.train_variants=nn.ModuleList([nn.LSTM(in_dim, hidden_size=g_embed_dim, num_layers=2, proj_size=out_dim,batch_first=True)for i in range (num_domains)])
-        self.test_variant=nn.LSTM(in_dim, hidden_size=g_embed_dim, num_layers=2, proj_size=out_dim, batch_first=True)
+        self.in_dim=in_dim
+        self.invariant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim)
+        self.train_variants=nn.ModuleList([SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim) for i in range (num_domains)])
+        self.test_variant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim)
         self.num_domains=num_domains
         self.eta=lambda x,y: x+y
 
@@ -133,7 +149,7 @@ class TrainInvariant(pl.LightningModule):
         # training_step defines the train loop.
         # it is independent of forward
 
-        losses=[self.loss(self(batch[2*i], i), batch[2*i+1]) for i in range (self.num_domains)]
+        losses=[self.loss(self(batch[i], i), batch[i][:, :,self.in_dim:]) for i in range (self.num_domains)]
         loss=0
         for i in range(self.num_domains):
             loss+=losses[i]
@@ -142,8 +158,7 @@ class TrainInvariant(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx) :
-        losses = [self.loss(self(batch[2*i], i), batch[2*i+1]) for i in range(self.num_domains)]
-
+        losses = [self.loss(self(batch[i], i), batch[i][:, :,self.in_dim:]) for i in range(self.num_domains)]
         loss = 0
         for i in range(self.num_domains):
             loss += losses[i]
@@ -192,10 +207,10 @@ if __name__=="__main__":
     # g_layers=2
     max_epoch=1000
 
-    all_dataset = TensorDataset(*make_water_data(raw=raw, data_length=data_length, drop_columns=drop_columns))
-    in_dim = all_dataset[0][0].shape[1]
-    out_dim = all_dataset[0][1].shape[1]
-    num_domains=len(all_dataset[0])//2
+    all_dataset = TensorDataset(make_water_data(raw=raw, data_length=data_length, drop_columns=drop_columns))
+    in_dim = 1
+    out_dim = 1
+    num_domains=1
     split_fraction=0.7
     split_point=int(len(all_dataset)*split_fraction)
 
@@ -221,19 +236,19 @@ if __name__=="__main__":
                                            "max_epoch": max_epoch,
                                            "file":os.path.basename(__file__)})
 
-    base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
+    # base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
 
 
     # base_trans = TrainInvariant.load_from_checkpoint(get_latest_file(),in_dim=in_dim, f_embed_dim=f_embed_dim,
     #                                                  g_embed_dim=g_embed_dim,
     #                                                  out_dim=out_dim,
     #                                                  num_domains=num_domains)
-    # base_trans = TrainInvariant.load_from_checkpoint("epoch=483-step=484.ckpt",
-    #                                                 in_dim=in_dim,
-    #                                                  f_embed_dim=f_embed_dim,
-    #                                                  g_embed_dim=g_embed_dim,
-    #                                                  out_dim=out_dim,
-    #                                                  num_domains=num_domains)
+    base_trans = TrainInvariant.load_from_checkpoint("epoch=810-step=4866.ckpt",
+                                                    in_dim=in_dim,
+                                                     f_embed_dim=f_embed_dim,
+                                                     g_embed_dim=g_embed_dim,
+                                                     out_dim=out_dim,
+                                                     num_domains=num_domains)
 
 
     wandb_logger.watch(base_trans, log="all")
@@ -253,7 +268,7 @@ if __name__=="__main__":
                           accelerator="gpu", devices=1,
                           callbacks=[
                               model_callback,
-                              early_stop_callback,
+                              # early_stop_callback,
                                      # small_error_callback
                                      # model_checkpoint
                                      ],

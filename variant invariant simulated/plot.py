@@ -82,27 +82,35 @@ class Linear(nn.Module):
         return self.net(x)
 
 class SequenceModule(nn.Module):
-    def __init__(self, in_dim, seq_hidden_dim, init_hidden_dim, out_dim, depth=3):
+    def __init__(self, in_dim, seq_hidden_dim, init_hidden_dim, out_dim, warmup_length):
         super().__init__()
         self.num_layers=2
         self.seq_hidden_dim=seq_hidden_dim
         self.in_dim=in_dim
         self.out_dim=out_dim
-        self.lstm=nn.LSTM(in_dim, hidden_size=seq_hidden_dim, num_layers=self.num_layers, proj_size=out_dim, batch_first=True)
-        self.mlp=LinearElu(in_dim+out_dim, init_hidden_dim, self.num_layers*seq_hidden_dim, depth)
+        self.warmup_length=warmup_length
 
+        self.lstm=nn.LSTM(in_dim, hidden_size=seq_hidden_dim, num_layers=self.num_layers, proj_size=out_dim, batch_first=True)
+        self.lstm_warmup=nn.LSTM(in_dim+out_dim,
+                                 hidden_size=init_hidden_dim,
+                                 num_layers=self.num_layers,
+                                 batch_first=True
+                                 )
     def forward(self, x):
-        init=self.mlp(x[:, :1]).reshape(self.num_layers, x.shape[0], self.seq_hidden_dim)
-        return self.lstm(x[:,:,:self.in_dim], (torch.zeros(self.num_layers,x.shape[0],self.out_dim).to("cuda"), init))
+        #batch, length, dim
+        _, (init, _) =self.lstm_warmup(x[:, :self.warmup_length])
+        return self.lstm(x[:,self.warmup_length:,:self.in_dim],
+                         (torch.zeros(self.num_layers,x.shape[0],self.out_dim).to("cuda"), init))
 
 
 class TrainInvariant(pl.LightningModule):
-    def __init__(self, in_dim, f_embed_dim,  g_embed_dim, out_dim, num_domains):
+    def __init__(self, in_dim, f_embed_dim,  g_embed_dim, out_dim, num_domains, warmup_length):
         super().__init__()
         self.in_dim=in_dim
-        self.invariant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim)
-        self.train_variants=nn.ModuleList([SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim) for i in range (num_domains)])
-        self.test_variant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim)
+        self.warmup_length=warmup_length
+        self.invariant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim, warmup_length)
+        self.train_variants=nn.ModuleList([SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim, warmup_length) for i in range (num_domains)])
+        self.test_variant=SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim, warmup_length)
         self.num_domains=num_domains
         self.eta=lambda x,y: x+y
 
@@ -117,7 +125,7 @@ class TrainInvariant(pl.LightningModule):
         # training_step defines the train loop.
         # it is independent of forward
 
-        losses=[self.loss(self(batch[i], i), batch[i][:, :,self.in_dim:]) for i in range (self.num_domains)]
+        losses=[self.loss(self(batch[i], i), batch[i][:, self.warmup_length:,self.in_dim:]) for i in range (self.num_domains)]
         loss=0
         for i in range(self.num_domains):
             loss+=losses[i]
@@ -126,7 +134,7 @@ class TrainInvariant(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx) :
-        losses = [self.loss(self(batch[i], i), batch[i][:, :,self.in_dim:]) for i in range(self.num_domains)]
+        losses = [self.loss(self(batch[i], i), batch[i][:, self.warmup_length:,self.in_dim:]) for i in range(self.num_domains)]
         loss = 0
         for i in range(self.num_domains):
             loss += losses[i]
@@ -141,7 +149,6 @@ class TrainInvariant(pl.LightningModule):
         return optimizer
 
 
-
 def get_latest_file():
     list_of_files = glob.glob(os.path.dirname(__file__) + '/DA Thesis/**/*.ckpt',
                               recursive=True)  # * means all if need specific format then *.csv
@@ -149,7 +156,8 @@ def get_latest_file():
     return latest_file
 if __name__=="__main__":
     # define any number of nn.Modules (or use your current ones)
-    drop_columns=["Unnamed: 0", "time2.1.nsteps."]
+    drop_columns = ["Unnamed: 0", "time2.1.nsteps.",
+                  "rain_t_2"]
     all_data=[]
     # for file in os.listdir("data"):
     #     one_domain = pd.read_csv("data/"+file)
@@ -159,8 +167,8 @@ if __name__=="__main__":
     raw = [
         # "data/data_exportrate=0.125.csv",
            # "data/data_exportconstrain.csv",
-        # "data/data_exportsindiv30rain.csv",
-        "data/data_exportlittlerain.csv"
+        "data/data_exportsindiv30rain.csv",
+        # "data/data_exportlittlerain.csv"-
 
     ]
 
@@ -172,9 +180,9 @@ if __name__=="__main__":
 
 
     predict_length = 800
-    warm_up_length=200
-    data_length=predict_length+warm_up_length
-    f_embed_dim = 100
+    warmup_length = 200
+    data_length=predict_length+warmup_length
+    f_embed_dim = 1000
     g_embed_dim=20
     # f_layers=2
     # g_layers=2
@@ -182,24 +190,36 @@ if __name__=="__main__":
 
 
     in_dim = 1
-    out_dim = 1
+    out_dim = 10
     num_domains = 1
-    start=0
-    end=146000
+    start=9000
+    end=10000
     tensor=make_water_data(raw, data_length, drop_columns).to("cuda")[start:end]
-    # base_trans = TrainInvariant.load_from_checkpoint("epoch=757-step=4548.ckpt",
-    #                                                 in_dim=in_dim,
-    #                                                  f_embed_dim=f_embed_dim,
-    #                                                  g_embed_dim=g_embed_dim,
-    #                                                  out_dim=out_dim,
-    #                                                  num_domains=num_domains).to("cuda")
-    # result=base_trans(tensor.reshape((1,end-start,2)),0)
+    # tensor=make_water_data(raw, data_length, drop_columns)[start:end]
+
+    base_trans = TrainInvariant.load_from_checkpoint("epoch=121-step=732.ckpt",
+                                                    in_dim=in_dim,
+                                                     f_embed_dim=f_embed_dim,
+                                                     g_embed_dim=g_embed_dim,
+                                                     out_dim=out_dim,
+                                                     num_domains=num_domains,
+                                                     warmup_length=warmup_length).to("cuda")
+
+    result=base_trans(tensor.reshape((1,end-start,-1)),0)
     # plt.plot(result.flatten().cpu().detach())
     # plt.plot(tensor[:,0].cpu().detach())
     df=pd.read_csv(raw[0]).drop(drop_columns, 1)
-    for i in range(2,tensor.shape[1]):
-        plt.plot(tensor[:, i].cpu().detach(), label = df.columns[i])
+    result=torch.cat(
+            (tensor[:warmup_length],
+             torch.cat((tensor[warmup_length:, 0:1],result.reshape((-1,10))), dim=1))).cpu().detach()
 
-    plt.legend()
-
-    plt.show()
+    for i in range(tensor.shape[1]):
+        plt.plot(tensor[:, i].cpu().detach(), label = df.columns[i]+"df")
+        plt.plot(result[:,i].cpu().detach(), label = df.columns[i]+"predict")
+        plt.legend()
+        plt.show()
+    # for i in range(tensor.shape[1]):
+    #     plt.plot(tensor[:, i].cpu().detach(), label = df.columns[i]+"df")
+    #     # plt.plot(result[:,i].cpu().detach(), label = df.columns[i]+"predict")
+    # plt.legend()
+    # plt.show()

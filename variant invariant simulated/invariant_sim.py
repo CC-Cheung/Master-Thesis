@@ -116,27 +116,35 @@ class Linear(nn.Module):
         return self.net(x)
 
 class SequenceModule(nn.Module):
-    def __init__(self, in_dim, seq_hidden_dim, init_hidden_dim, out_dim, depth=3):
+    def __init__(self, in_dim, seq_hidden_dim, init_hidden_dim, out_dim, warmup_length):
         super().__init__()
         self.num_layers=2
         self.seq_hidden_dim=seq_hidden_dim
         self.in_dim=in_dim
         self.out_dim=out_dim
-        self.lstm=nn.LSTM(in_dim, hidden_size=seq_hidden_dim, num_layers=self.num_layers, proj_size=out_dim, batch_first=True)
-        self.mlp=LinearElu(in_dim+out_dim, init_hidden_dim, self.num_layers*seq_hidden_dim, depth)
+        self.warmup_length=warmup_length
 
+        self.lstm=nn.LSTM(in_dim, hidden_size=seq_hidden_dim, num_layers=self.num_layers, proj_size=out_dim, batch_first=True)
+        self.lstm_warmup=nn.LSTM(in_dim+out_dim,
+                                 hidden_size=init_hidden_dim,
+                                 num_layers=self.num_layers,
+                                 batch_first=True
+                                 )
     def forward(self, x):
-        init=self.mlp(x[:, :1]).reshape(self.num_layers, x.shape[0], self.seq_hidden_dim)
-        return self.lstm(x[:,:,:self.in_dim], (torch.zeros(self.num_layers,x.shape[0],self.out_dim).to("cuda"), init))
+        #batch, length, dim
+        _, (init, _) =self.lstm_warmup(x[:, :self.warmup_length])
+        return self.lstm(x[:,self.warmup_length:,:self.in_dim],
+                         (torch.zeros(self.num_layers,x.shape[0],self.out_dim).to("cuda"), init))
 
 
 class TrainInvariant(pl.LightningModule):
-    def __init__(self, in_dim, f_embed_dim,  g_embed_dim, out_dim, num_domains):
+    def __init__(self, in_dim, f_embed_dim,  g_embed_dim, out_dim, num_domains, warmup_length):
         super().__init__()
         self.in_dim=in_dim
-        self.invariant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim)
-        self.train_variants=nn.ModuleList([SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim) for i in range (num_domains)])
-        self.test_variant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim)
+        self.warmup_length=warmup_length
+        self.invariant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim, warmup_length)
+        self.train_variants=nn.ModuleList([SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim, warmup_length) for i in range (num_domains)])
+        self.test_variant=SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim, warmup_length)
         self.num_domains=num_domains
         self.eta=lambda x,y: x+y
 
@@ -151,7 +159,7 @@ class TrainInvariant(pl.LightningModule):
         # training_step defines the train loop.
         # it is independent of forward
 
-        losses=[self.loss(self(batch[i], i), batch[i][:, :,self.in_dim:]) for i in range (self.num_domains)]
+        losses=[self.loss(self(batch[i], i), batch[i][:, self.warmup_length:,self.in_dim:]) for i in range (self.num_domains)]
         loss=0
         for i in range(self.num_domains):
             loss+=losses[i]
@@ -160,7 +168,7 @@ class TrainInvariant(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx) :
-        losses = [self.loss(self(batch[i], i), batch[i][:, :,self.in_dim:]) for i in range(self.num_domains)]
+        losses = [self.loss(self(batch[i], i), batch[i][:, self.warmup_length:,self.in_dim:]) for i in range(self.num_domains)]
         loss = 0
         for i in range(self.num_domains):
             loss += losses[i]
@@ -207,13 +215,13 @@ if __name__=="__main__":
 
 
     predict_length = 800
-    warm_up_length=200
-    data_length=predict_length+warm_up_length
+    warmup_length=200
+    data_length= predict_length + warmup_length
     f_embed_dim = 1000
     g_embed_dim=20
     # f_layers=2
     # g_layers=2
-    max_epoch=1000
+    max_epoch=500
 
     all_dataset = TensorDataset(make_water_data(raw=raw, data_length=data_length, drop_columns=drop_columns))
     in_dim = 1
@@ -242,26 +250,28 @@ if __name__=="__main__":
                                            "f_embed_dim":f_embed_dim,
                                            "g_embed_dim": g_embed_dim,
                                            "max_epoch": max_epoch,
+                                           "warmup_length": warmup_length,
                                            "file":os.path.basename(__file__)})
 
-    base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
+    base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains, warmup_length=warmup_length)
 
 
     # base_trans = TrainInvariant.load_from_checkpoint(get_latest_file(),in_dim=in_dim, f_embed_dim=f_embed_dim,
     #                                                  g_embed_dim=g_embed_dim,
     #                                                  out_dim=out_dim,
     #                                                  num_domains=num_domains)
-    # base_trans = TrainInvariant.load_from_checkpoint("epoch=0-step=6.ckpt",
-    #                                                 in_dim=in_dim,
-    #                                                  f_embed_dim=f_embed_dim,
-    #                                                  g_embed_dim=g_embed_dim,
-    #                                                  out_dim=out_dim,
-    #                                                  num_domains=num_domains)
+    base_trans = TrainInvariant.load_from_checkpoint("epoch=121-step=732.ckpt",
+                                                    in_dim=in_dim,
+                                                     f_embed_dim=f_embed_dim,
+                                                     g_embed_dim=g_embed_dim,
+                                                     out_dim=out_dim,
+                                                     num_domains=num_domains,
+                                                     warmup_length=warmup_length)
 
 
     wandb_logger.watch(base_trans, log="all")
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0, patience=200)
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0, patience=100)
     # small_error_callback = EarlyStopping(monitor="val_loss", stopping_threshold=0.02)
     model_callback = ModelCheckpoint(
         save_top_k=1,

@@ -32,8 +32,10 @@ import pandas as pd
 
 
 def make_water_data(raw, data_length, drop_columns):
-    # df_raw = [pd.read_csv(name).drop(drop_columns,1) for name in raw]
-    df_raw = [pd.read_csv(name).loc[:,["rain_t_2", "s_t_2.1.nsteps."]] for name in raw]
+    df_raw = [pd.read_csv(name).drop(drop_columns,1) for name in raw]
+    # df_raw = [pd.read_csv(name).loc[:,[
+    #                                       # "rain_t_2",
+    #                                    "s_t_2.1.nsteps.", "Ctot", "Ntot"]] for name in raw]
 
     all_domains=pd.concat(df_raw,axis=0)
     mean=all_domains.mean(axis=0)
@@ -121,11 +123,11 @@ class SequenceModule(nn.Module):
         self.in_dim=in_dim
         self.out_dim=out_dim
         self.lstm=nn.LSTM(in_dim, hidden_size=seq_hidden_dim, num_layers=self.num_layers, proj_size=out_dim, batch_first=True)
-        self.mlp=LinearElu(in_dim+out_dim, init_hidden_dim, self.num_layers*out_dim, depth)
+        self.mlp=LinearElu(in_dim+out_dim, init_hidden_dim, self.num_layers*seq_hidden_dim, depth)
 
     def forward(self, x):
-        init=self.mlp(x[:, :1]).reshape(self.num_layers, x.shape[0], self.out_dim)
-        return self.lstm(x[:,:,:self.in_dim], (init,torch.zeros(self.num_layers,x.shape[0],self.seq_hidden_dim).to("cuda")))
+        init=self.mlp(x[:, :1]).reshape(self.num_layers, x.shape[0], self.seq_hidden_dim)
+        return self.lstm(x[:,:,:self.in_dim], (torch.zeros(self.num_layers,x.shape[0],self.out_dim).to("cuda"), init))
 
 
 class TrainInvariant(pl.LightningModule):
@@ -181,14 +183,20 @@ def get_latest_file():
     return latest_file
 if __name__=="__main__":
     # define any number of nn.Modules (or use your current ones)
-    drop_columns=["Unnamed: 0", "time2.1.nsteps."]
+    drop_columns=["Unnamed: 0", "time2.1.nsteps.",
+                  "rain_t_2"]
     all_data=[]
     # for file in os.listdir("data"):
     #     one_domain = pd.read_csv("data/"+file)
     #     one_domain=one_domain.drop("Unnamed: 0",1)
     #     all_data[file]=one_domain
 
-    raw = ["data/data_exportrate=0.125.csv"]
+    raw = [
+        # "data/data_exportrate=0.125.csv",
+        #    "data/data_exportconstrain.csv",
+        "data/data_exportsindiv30rain.csv",
+
+    ]
 
 
     np.random.seed(0)
@@ -201,7 +209,7 @@ if __name__=="__main__":
     predict_length = 800
     warm_up_length=200
     data_length=predict_length+warm_up_length
-    f_embed_dim = 50
+    f_embed_dim = 1000
     g_embed_dim=20
     # f_layers=2
     # g_layers=2
@@ -209,7 +217,7 @@ if __name__=="__main__":
 
     all_dataset = TensorDataset(make_water_data(raw=raw, data_length=data_length, drop_columns=drop_columns))
     in_dim = 1
-    out_dim = 1
+    out_dim = 10
     num_domains=1
     split_fraction=0.7
     split_point=int(len(all_dataset)*split_fraction)
@@ -236,24 +244,24 @@ if __name__=="__main__":
                                            "max_epoch": max_epoch,
                                            "file":os.path.basename(__file__)})
 
-    # base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
+    base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
 
 
     # base_trans = TrainInvariant.load_from_checkpoint(get_latest_file(),in_dim=in_dim, f_embed_dim=f_embed_dim,
     #                                                  g_embed_dim=g_embed_dim,
     #                                                  out_dim=out_dim,
     #                                                  num_domains=num_domains)
-    base_trans = TrainInvariant.load_from_checkpoint("epoch=810-step=4866.ckpt",
-                                                    in_dim=in_dim,
-                                                     f_embed_dim=f_embed_dim,
-                                                     g_embed_dim=g_embed_dim,
-                                                     out_dim=out_dim,
-                                                     num_domains=num_domains)
+    # base_trans = TrainInvariant.load_from_checkpoint("epoch=0-step=6.ckpt",
+    #                                                 in_dim=in_dim,
+    #                                                  f_embed_dim=f_embed_dim,
+    #                                                  g_embed_dim=g_embed_dim,
+    #                                                  out_dim=out_dim,
+    #                                                  num_domains=num_domains)
 
 
     wandb_logger.watch(base_trans, log="all")
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0, patience=50)
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0, patience=200)
     # small_error_callback = EarlyStopping(monitor="val_loss", stopping_threshold=0.02)
     model_callback = ModelCheckpoint(
         save_top_k=1,
@@ -268,7 +276,7 @@ if __name__=="__main__":
                           accelerator="gpu", devices=1,
                           callbacks=[
                               model_callback,
-                              # early_stop_callback,
+                              early_stop_callback,
                                      # small_error_callback
                                      # model_checkpoint
                                      ],

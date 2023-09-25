@@ -6,3 +6,7 @@ kk.py
 /artifacts/
 *.ckpt
 */wandb/
+/R code/
+/StormReactor/
+/WNTR/
+*/__pycache__/

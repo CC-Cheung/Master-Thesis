@@ -43,6 +43,18 @@ def make_water_data(raw, data_length, drop_columns):
 
         return torch.tensor(normalized_domain).float()
 
+def make_water_data():
+
+    length=10000
+    sin=np.sin(np.arange(length)/100)
+    line=np.arange(length)-length/2
+    domain=np.stack((line,sin)).transpose(-1,2)
+    mean = domain.mean(axis=0)
+    std = domain.std(axis=0)
+    normalized_domain=((domain - mean) / std)
+
+
+    return torch.tensor(normalized_domain).float()
 
 
 class LinearRelu(nn.Module):
@@ -182,7 +194,7 @@ if __name__=="__main__":
     predict_length = 800
     warmup_length = 200
     data_length=predict_length+warmup_length
-    f_embed_dim = 1000
+    f_embed_dim = 100
     g_embed_dim=20
     # f_layers=2
     # g_layers=2
@@ -190,14 +202,14 @@ if __name__=="__main__":
 
 
     in_dim = 1
-    out_dim = 10
+    out_dim = 1
     num_domains = 1
-    start=9000
-    end=10000
-    tensor=make_water_data(raw, data_length, drop_columns).to("cuda")[start:end]
+    start=6000
+    end=7000
+    tensor=make_water_data().to("cuda")[start:end]
     # tensor=make_water_data(raw, data_length, drop_columns)[start:end]
 
-    base_trans = TrainInvariant.load_from_checkpoint("epoch=121-step=732.ckpt",
+    base_trans = TrainInvariant.load_from_checkpoint("epoch=56-step=57.ckpt",
                                                     in_dim=in_dim,
                                                      f_embed_dim=f_embed_dim,
                                                      g_embed_dim=g_embed_dim,
@@ -211,7 +223,7 @@ if __name__=="__main__":
     df=pd.read_csv(raw[0]).drop(drop_columns, 1)
     result=torch.cat(
             (tensor[:warmup_length],
-             torch.cat((tensor[warmup_length:, 0:1],result.reshape((-1,10))), dim=1))).cpu().detach()
+             torch.cat((tensor[warmup_length:, 0:1],result.reshape((-1,out_dim))), dim=1))).cpu().detach()
 
     for i in range(tensor.shape[1]):
         plt.plot(tensor[:, i].cpu().detach(), label = df.columns[i]+"df")

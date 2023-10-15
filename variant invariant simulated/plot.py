@@ -25,7 +25,7 @@ import pandas as pd
 
 
 def make_water_data(raw, data_length, drop_columns):
-    df_raw = [pd.read_csv(name).drop(drop_columns,1) for name in raw]
+    df_raw = [pd.read_csv(name).drop(drop_columns,1).iloc[::20] for name in raw]
     # df_raw = [pd.read_csv(name).loc[:, [
     #                                        # "rain_t_2",
     #                                        "s_t_2.1.nsteps.", "Ctot", "Ntot"]] for name in raw]
@@ -43,18 +43,7 @@ def make_water_data(raw, data_length, drop_columns):
 
         return torch.tensor(normalized_domain).float()
 
-def make_water_data():
 
-    length=10000
-    sin=np.sin(np.arange(length)/100)
-    line=np.arange(length)-length/2
-    domain=np.stack((line,sin)).transpose(-1,2)
-    mean = domain.mean(axis=0)
-    std = domain.std(axis=0)
-    normalized_domain=((domain - mean) / std)
-
-
-    return torch.tensor(normalized_domain).float()
 
 
 class LinearRelu(nn.Module):
@@ -105,14 +94,14 @@ class SequenceModule(nn.Module):
         self.lstm=nn.LSTM(in_dim, hidden_size=seq_hidden_dim, num_layers=self.num_layers, proj_size=out_dim, batch_first=True)
         self.lstm_warmup=nn.LSTM(in_dim+out_dim,
                                  hidden_size=init_hidden_dim,
+                                 proj_size=out_dim,
                                  num_layers=self.num_layers,
                                  batch_first=True
                                  )
     def forward(self, x):
         #batch, length, dim
-        _, (init, _) =self.lstm_warmup(x[:, :self.warmup_length])
-        return self.lstm(x[:,self.warmup_length:,:self.in_dim],
-                         (torch.zeros(self.num_layers,x.shape[0],self.out_dim).to("cuda"), init))
+        _, (h0, c0) =self.lstm_warmup(x[:, :self.warmup_length])
+        return self.lstm(x[:,self.warmup_length:,:self.in_dim], (h0, c0))
 
 
 class TrainInvariant(pl.LightningModule):
@@ -177,10 +166,24 @@ if __name__=="__main__":
     #     all_data[file]=one_domain
 
     raw = [
+
+        # "data/data_exportrate=0.0714.csv",
+        # "data/data_exportrate=0.083.csv",
+        # "data/data_exportrate=0.0909.csv",
+        # "data/data_exportrate=0.1.csv",
+        # "data/data_exportrate=0.111.csv",
         # "data/data_exportrate=0.125.csv",
-           # "data/data_exportconstrain.csv",
-        "data/data_exportsindiv30rain.csv",
-        # "data/data_exportlittlerain.csv"-
+
+        "data/data_exportCN.add=25.csv",
+        "data/data_exportCN.add=40.csv",
+        "data/data_exportCN.add=55.csv",
+        "data/data_exportCN.add=70.csv",
+        "data/data_exportCN.add=85.csv",
+        "data/data_exportCN.add=100.csv",
+
+        # "data/data_exportconstrain.csv",
+        # "data/data_exportsindiv30rain.csv",
+        # "data/data_exportlittlerain.csv"
 
     ]
 
@@ -191,10 +194,10 @@ if __name__=="__main__":
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
 
 
-    predict_length = 800
-    warmup_length = 200
+    predict_length = 200
+    warmup_length = 100
     data_length=predict_length+warmup_length
-    f_embed_dim = 100
+    f_embed_dim = 1000
     g_embed_dim=20
     # f_layers=2
     # g_layers=2
@@ -202,36 +205,34 @@ if __name__=="__main__":
 
 
     in_dim = 1
-    out_dim = 1
+    out_dim = 10
     num_domains = 1
-    start=6000
-    end=7000
-    tensor=make_water_data().to("cuda")[start:end]
-    # tensor=make_water_data(raw, data_length, drop_columns)[start:end]
+    start=100
+    end=300
 
-    base_trans = TrainInvariant.load_from_checkpoint("epoch=56-step=57.ckpt",
-                                                    in_dim=in_dim,
-                                                     f_embed_dim=f_embed_dim,
-                                                     g_embed_dim=g_embed_dim,
-                                                     out_dim=out_dim,
-                                                     num_domains=num_domains,
-                                                     warmup_length=warmup_length).to("cuda")
 
-    result=base_trans(tensor.reshape((1,end-start,-1)),0)
-    # plt.plot(result.flatten().cpu().detach())
-    # plt.plot(tensor[:,0].cpu().detach())
+    # base_trans = TrainInvariant.load_from_checkpoint("epoch=255-step=4352.ckpt",
+    #                                                 in_dim=in_dim,
+    #                                                  f_embed_dim=f_embed_dim,
+    #                                                  g_embed_dim=g_embed_dim,
+    #                                                  out_dim=out_dim,
+    #                                                  num_domains=num_domains,
+    #                                                  warmup_length=warmup_length).to("cuda")
+    tensor = make_water_data(raw, data_length, drop_columns).to("cuda")
+    # result=tensor.clone()
+    # for i in range(35):
+    #     result[100+i*200: 300+i*200, 1:]=base_trans(tensor[i*200:i*200+300].reshape((1, 300, -1)), 0)
     df=pd.read_csv(raw[0]).drop(drop_columns, 1)
-    result=torch.cat(
-            (tensor[:warmup_length],
-             torch.cat((tensor[warmup_length:, 0:1],result.reshape((-1,out_dim))), dim=1))).cpu().detach()
-
-    for i in range(tensor.shape[1]):
-        plt.plot(tensor[:, i].cpu().detach(), label = df.columns[i]+"df")
-        plt.plot(result[:,i].cpu().detach(), label = df.columns[i]+"predict")
-        plt.legend()
-        plt.show()
     # for i in range(tensor.shape[1]):
     #     plt.plot(tensor[:, i].cpu().detach(), label = df.columns[i]+"df")
-    #     # plt.plot(result[:,i].cpu().detach(), label = df.columns[i]+"predict")
-    # plt.legend()
-    # plt.show()
+    #     plt.plot(result[:,i].cpu().detach(), label = df.columns[i]+"predict")
+    #     plt.legend()
+    #     plt.show()
+    for name in raw:
+        tensor = make_water_data([name], data_length, drop_columns)
+
+        for i in range(tensor.shape[1]):
+            plt.plot(tensor[:, i].cpu().detach(), label = df.columns[i]+"df")
+            # plt.plot(result[:,i].cpu().detach(), label = df.columns[i]+"predict")
+        plt.legend()
+        plt.show()

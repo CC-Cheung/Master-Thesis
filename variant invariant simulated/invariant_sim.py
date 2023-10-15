@@ -32,7 +32,7 @@ import pandas as pd
 
 
 def make_water_data(raw, data_length, drop_columns):
-    df_raw = [pd.read_csv(name).drop(drop_columns,1) for name in raw]
+    df_raw = [pd.read_csv(name).drop(drop_columns,1).iloc[::20, :] for name in raw]
     # df_raw = [pd.read_csv(name).loc[:,[
     #                                       # "rain_t_2",
     #                                    "s_t_2.1.nsteps.", "Ctot", "Ntot"]] for name in raw]
@@ -47,8 +47,8 @@ def make_water_data(raw, data_length, drop_columns):
         # temp=[(normalized_domain[i:i+data_length, 0:1], normalized_domain[i:i+data_length, 1:])
         #  for i in range(0, len(domain), data_length)]
         # return [torch.tensor(i).float() for i in list(zip(*temp))]
-        temp=np.array([normalized_domain[i:i+data_length]
-         for i in range(0, len(domain), data_length)])
+        temp=np.stack([normalized_domain[i:i+data_length]
+         for i in range(0, len(domain), data_length//20)][:-20])
         return torch.tensor(temp).float()
 
 
@@ -127,14 +127,14 @@ class SequenceModule(nn.Module):
         self.lstm=nn.LSTM(in_dim, hidden_size=seq_hidden_dim, num_layers=self.num_layers, proj_size=out_dim, batch_first=True)
         self.lstm_warmup=nn.LSTM(in_dim+out_dim,
                                  hidden_size=init_hidden_dim,
+                                 proj_size=out_dim,
                                  num_layers=self.num_layers,
                                  batch_first=True
                                  )
     def forward(self, x):
         #batch, length, dim
-        _, (init, _) =self.lstm_warmup(x[:, :self.warmup_length])
-        return self.lstm(x[:,self.warmup_length:,:self.in_dim],
-                         (torch.zeros(self.num_layers,x.shape[0],self.out_dim).to("cuda"), init))
+        _, (h0, c0) =self.lstm_warmup(x[:, :self.warmup_length])
+        return self.lstm(x[:,self.warmup_length:,:self.in_dim], (h0, c0))
 
 
 class TrainInvariant(pl.LightningModule):
@@ -214,14 +214,14 @@ if __name__=="__main__":
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
 
 
-    predict_length = 800
-    warmup_length=200
+    predict_length = 200
+    warmup_length=100
     data_length= predict_length + warmup_length
     f_embed_dim = 1000
     g_embed_dim=20
     # f_layers=2
     # g_layers=2
-    max_epoch=500
+    max_epoch=300
 
     all_dataset = TensorDataset(make_water_data(raw=raw, data_length=data_length, drop_columns=drop_columns))
     in_dim = 1
@@ -254,19 +254,19 @@ if __name__=="__main__":
                                            "file":os.path.basename(__file__)})
 
     base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains, warmup_length=warmup_length)
-
+    #
 
     # base_trans = TrainInvariant.load_from_checkpoint(get_latest_file(),in_dim=in_dim, f_embed_dim=f_embed_dim,
     #                                                  g_embed_dim=g_embed_dim,
     #                                                  out_dim=out_dim,
     #                                                  num_domains=num_domains)
-    base_trans = TrainInvariant.load_from_checkpoint("epoch=121-step=732.ckpt",
-                                                    in_dim=in_dim,
-                                                     f_embed_dim=f_embed_dim,
-                                                     g_embed_dim=g_embed_dim,
-                                                     out_dim=out_dim,
-                                                     num_domains=num_domains,
-                                                     warmup_length=warmup_length)
+    # base_trans = TrainInvariant.load_from_checkpoint("epoch=121-step=732.ckpt",
+    #                                                 in_dim=in_dim,
+    #                                                  f_embed_dim=f_embed_dim,
+    #                                                  g_embed_dim=g_embed_dim,
+    #                                                  out_dim=out_dim,
+    #                                                  num_domains=num_domains,
+    #                                                  warmup_length=warmup_length)
 
 
     wandb_logger.watch(base_trans, log="all")

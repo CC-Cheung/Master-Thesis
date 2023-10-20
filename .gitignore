@@ -10,3 +10,4 @@ kk.py
 /StormReactor/
 /WNTR/
 */__pycache__/
+*.csv

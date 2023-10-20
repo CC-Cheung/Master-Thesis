@@ -25,59 +25,31 @@ import glob
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from scipy.integrate import odeint
+import pandas as pd
+def make_water_data(raw, data_length, drop_columns):
+    df_raw = [pd.read_csv(name).drop(drop_columns,1).iloc[::20, :] for name in raw]
+    df_raw2 = [pd.read_csv(name).drop(drop_columns,1).iloc[::20, :] for name in raw2]
+
+    # df_raw = [pd.read_csv(name).loc[:,[
+    #                                       # "rain_t_2",
+    #                                    "s_t_2.1.nsteps.", "Ctot", "Ntot"]] for name in raw]
+
+    all_domains=pd.concat(df_raw2,axis=0)
+    mean=all_domains.mean(axis=0)
+    std=all_domains.std(axis=0)
+    result=[]
+    for domain in df_raw:
+        normalized_domain=((domain - mean) / std).values
 
 
-def make_weird_data_val(num_points, coef):
-    full=coef
-    for i in range(num_points):
-        full=np.concatenate((full,(full[i:i+1]-full[i+1:i+2]+0.5)/2+np.sin(i)))
+        # temp=[(normalized_domain[i:i+data_length, 0:1], normalized_domain[i:i+data_length, 1:])
+        #  for i in range(0, len(domain), data_length)]
+        # return [torch.tensor(i).float() for i in list(zip(*temp))]
+        temp=np.stack([normalized_domain[i:i+data_length]
+         for i in range(0, len(domain), data_length//20)][:-20])
+        result.append(torch.tensor(temp).float())
+    return result
 
-    x = full[:num_points]
-    y = full[ 2:]
-
-    #coef will be 3
-    #y will be num_points, out_dim=1
-
-    x = torch.Tensor(x).unsqueeze(dim=0)
-    y = torch.Tensor(y).unsqueeze(dim=0)
-    return x,y
-def z_derivatives(x, t, g,h,b, input):
-    return [x[1]-input, -(1 / x[0]) * (x[1] ** 2 + b * x[1] + g * x[0] - g * h)]
-def input_func(input,t, duration):
-    return 0.1 * np.sin(2 * np.pi / duration * input* t)
-def make_water_data_val(num_points, start=0, end=3):
-    duration=end-start
-    time = np.arange(start, end, duration/(num_points+1))
-    full=np.zeros((num_points+1, 2))
-
-    # full=np.random.rand(num_domains, num_points+1, in_dim)
-    full[0, 0]=2e-3
-    def gen_func(x, t):
-        return z_derivatives(x, t, g, h, b, input_func(input,t,3))
-
-    temp= odeint(gen_func, full[0, :], time)
-    full=temp[np.newaxis,:]
-    #full 1, num_points+1,2 (1 because one domain, batch first)
-
-    x=full[:, :num_points]
-    y=full[:,1:]
-    #x,y will be 1, num_points, out_dim=1
-
-    y=torch.Tensor(y)
-
-    # x=torch.Tensor(
-    #     np.concatenate(
-    #         (x,
-    #          input_func(input.reshape((-1,1)),
-    #                     time[:-1].reshape((1,-1)),
-    #                     duration)[:, :,np.newaxis]), axis=-1))
-    x = torch.Tensor(input_func(
-                        input,
-                        time[:-1].reshape((1, -1)),
-                        3)[:, :,np.newaxis])
-    #y num_domain, num_points, in_dim, input num_domain, time num_points+1
-
-    return x,y
 class linear_relu(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, depth):
         super().__init__()
@@ -116,35 +88,55 @@ class linear(nn.Module):
 
 
 
-
-class TestInvariant(pl.LightningModule):
-
-    def __init__(self, in_dim, f_embed_dim, g_embed_dim, out_dim, num_domains):
+class SequenceModule(nn.Module):
+    def __init__(self, in_dim, seq_hidden_dim, init_hidden_dim, out_dim, warmup_length):
         super().__init__()
-        self.invariant = nn.LSTM(in_dim, hidden_size=f_embed_dim, num_layers=2, proj_size=out_dim, batch_first=True)
-        self.train_variants = nn.ModuleList(
-            [nn.LSTM(in_dim, hidden_size=g_embed_dim, num_layers=2, proj_size=out_dim, batch_first=True) for i in
-             range(num_domains)])
-        self.test_variant = nn.LSTM(in_dim, hidden_size=g_embed_dim, num_layers=2, proj_size=out_dim, batch_first=True)
-        self.num_domains = num_domains
-        self.eta = lambda x, y: x + y
+        self.num_layers=2
+        self.seq_hidden_dim=seq_hidden_dim
+        self.in_dim=in_dim
+        self.out_dim=out_dim
+        self.warmup_length=warmup_length
 
-        self.loss = nn.MSELoss()
-
+        self.lstm=nn.LSTM(in_dim, hidden_size=seq_hidden_dim, num_layers=self.num_layers, proj_size=out_dim, batch_first=True)
+        self.lstm_warmup=nn.LSTM(in_dim+out_dim,
+                                 hidden_size=init_hidden_dim,
+                                 proj_size=out_dim,
+                                 num_layers=self.num_layers,
+                                 batch_first=True
+                                 )
     def forward(self, x):
+        #batch, length, dim
+        _, (h0, c0) =self.lstm_warmup(x[:, :self.warmup_length])
+        return self.lstm(x[:,self.warmup_length:,:self.in_dim], (h0, c0))
+
+class TesInvariant(pl.LightningModule):
+
+    def __init__(self, in_dim, f_embed_dim,  g_embed_dim, out_dim, num_domains, warmup_length):
+        super().__init__()
+        self.in_dim=in_dim
+        self.warmup_length=warmup_length
+        self.invariant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim, warmup_length)
+        self.train_variants=nn.ModuleList([SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim, warmup_length) for i in range (num_domains)])
+        self.test_variant=SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim, warmup_length)
+        self.num_domains=num_domains
+        self.eta=lambda x,y: x+y
+
+        self.loss=nn.MSELoss()
+
+    def forward(self, x, domain_num):
         result_f = self.invariant(x)
-        result_g =self.test_variant(x)
+        result_g = self.test_variant(x)
 
         return self.eta(result_f[0], result_g[0])
 
     def training_step(self, batch, batch_idx):
-        loss=self.loss(self(batch[0]), batch[1])
+        loss=self.loss(self(batch[0], 0), batch[0][:, self.warmup_length:, self.in_dim:])
         # Logging to TensorBoard (if installed) by default
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx) :
-        loss = self.loss(self(batch[0]), batch[1])
+        loss=self.loss(self(batch[0], 0), batch[0][:, self.warmup_length:, self.in_dim:])
         # Logging to TensorBoard (if installed) by default
         self.log("val_loss", loss)
         return loss
@@ -160,34 +152,68 @@ def get_latest_file():
     return latest_file
 if __name__=="__main__":
     # define any number of nn.Modules (or use your current ones)
-    in_dim = 1
-    out_dim = 2
+    drop_columns = ["Unnamed: 0", "time2.1.nsteps.",
+                    "rain_t_2"]
+    all_data = []
+    # for file in os.listdir("data"):
+    #     one_domain = pd.read_csv("data/"+file)
+    #     one_domain=one_domain.drop("Unnamed: 0",1)
+    #     all_data[file]=one_domain
+
+    raw = [
+        # "data/data_exportrate=0.125.csv",
+        #    "data/data_exportconstrain.csv",
+        # "data/data_exportsindiv30rain.csv",
+        # "data/data_exportCN.add=25.csv",
+        # "data/data_exportCN.add=40.csv",
+        # "data/data_exportCN.add=55.csv",
+        "data/data_exportCN.add=70.csv",
+        # "data/data_exportCN.add=85.csv",
+        # "data/data_exportCN.add=100.csv",
+
+    ]
+    raw2 = [
+        # "data/data_exportrate=0.125.csv",
+        #    "data/data_exportconstrain.csv",
+        # "data/data_exportsindiv30rain.csv",
+        "data/data_exportCN.add=25.csv",
+        "data/data_exportCN.add=40.csv",
+        "data/data_exportCN.add=55.csv",
+        # "data/data_exportCN.add=70.csv",
+        "data/data_exportCN.add=85.csv",
+        "data/data_exportCN.add=100.csv",
+
+    ]
 
     np.random.seed(0)
     torch.use_deterministic_algorithms(True)
     torch.manual_seed(0)
-    key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
 
-    # input = np.random.normal(2,0.5,)   # m/s
-    # g = np.random.normal(9.81, 1)  # m/s^2
-    # h = np.random.normal(0.1, 0.01)  # m
-    # b = np.random.normal(0.25, 0.025)  # m/s
-    input = np.random.normal(2, 1, )  # m/s
-    g = np.random.normal(9.81, 2)  # m/s^2
-    h = np.random.normal(0.1, 0.02)  # m
-    b = np.random.normal(0.25, 0.05)  # m/s
+    key = "c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
 
-    num_points = 200
-    num_val_io_pairs=100
-    f_embed_dim = 50
-    g_embed_dim=10
-    max_epoch=3000
+    predict_length = 200
+    warmup_length = 100
+    data_length = predict_length + warmup_length
+    f_embed_dim = 1000
+    g_embed_dim = 100
+    # f_layers=2
+    # g_layers=2
+    max_epoch = 1000
 
-    # train_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
-    # val_dataset = TensorDataset(*make_quad_data(num_domains, num_points,train_coef))
+    all_dataset = TensorDataset(*make_water_data(raw=raw, data_length=data_length, drop_columns=drop_columns))
+    in_dim = 1
+    out_dim = 10
+    num_domains = 5
+    split_fraction = 0.2
+    split_point = int(len(all_dataset) * split_fraction)
 
-    train_dataset = TensorDataset(*make_water_data_val(num_val_io_pairs, end=3/(num_points+1)*(num_val_io_pairs+1)))
-    val_dataset = TensorDataset(*make_water_data_val(num_points))
+    # no random
+    train_dataset = all_dataset[:split_point]
+    val_dataset = all_dataset[:split_point]
+
+    # random
+    train_dataset, val_dataset = torch.utils.data.random_split(all_dataset, (split_fraction, 1 - split_fraction))
+
 
     train_loader = DataLoader(train_dataset, batch_size=20, shuffle=True)
     val_loader = DataLoader(val_dataset,batch_size=20)
@@ -196,15 +222,7 @@ if __name__=="__main__":
     tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/trash")
     wandb_logger=WandbLogger(project="DA Thesis", name="trash",log_model="True")
     wandb.init() ########################################################
-    wandb_logger.experiment.config.update({
-                                           "input, g,h,b": (input, g,h,b ),
-                                           "num_points": num_points,
 
-                                           "f_embed_dim":f_embed_dim,
-                                           "g_embed_dim": g_embed_dim,
-                                           "max_epoch": max_epoch,
-                                            "num_val_io_pairs":num_val_io_pairs,
-                                           "file":os.path.basename(__file__)})
 
     # base_trans=TestInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
 
@@ -214,17 +232,34 @@ if __name__=="__main__":
     #                                             in_dim=in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=1)
 
 
-    base_trans = TestInvariant.load_from_checkpoint(os.path.dirname(__file__)+"/variant.ckpt",
-                                                    in_dim=in_dim, f_embed_dim=f_embed_dim,
-                                                    g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=10)    #
-    # for param in base_trans.invariant.parameters():
-    #     param.requires_grad = False
-    # base_trans.invariant.eval()
+    # base_trans = TestInvariant.load_from_checkpoint(os.path.dirname(__file__)+"/variant.ckpt",
+    #                                                 in_dim=in_dim, f_embed_dim=f_embed_dim,
+    #                                                 g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=10)    #
+    past_model="epoch=462-step=7871.ckpt"
+    base_trans = TesInvariant.load_from_checkpoint(past_model,
+                                                   in_dim=in_dim,
+                                                   f_embed_dim=f_embed_dim,
+                                                   g_embed_dim=g_embed_dim,
+                                                   out_dim=out_dim,
+                                                   num_domains=num_domains,
+                                                   warmup_length=warmup_length)
+    wandb_logger.experiment.config.update({
+        "num_domains": num_domains,
+        "f_embed_dim": f_embed_dim,
+        "g_embed_dim": g_embed_dim,
+        "max_epoch": max_epoch,
+        "warmup_length": warmup_length,
+        "past model":past_model,
+        "file": os.path.basename(__file__)})
+
+    for param in base_trans.invariant.parameters():
+        param.requires_grad = False
+    base_trans.invariant.eval()
 
 
     wandb_logger.watch(base_trans, log="all")
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=500)
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=100)
     model_callback = ModelCheckpoint(
         save_top_k=1,
         monitor="val_loss",

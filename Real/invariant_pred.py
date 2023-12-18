@@ -69,49 +69,12 @@ def make_water_data(raw, data_length, drop_columns):
         #normalize
         domain.iloc[:, :year_idx] = (domain.iloc[:, :year_idx] - df_features.mean()) / df_features.std()
         domain.iloc[:,year_idx]=(domain.iloc[:,year_idx]-df_abs_time.min())/(df_abs_time.max()-df_abs_time.min())
-        #add missing column
-        feature_col = domain.columns[:year_idx]
-        for col in feature_col:
-            domain.insert(domain.columns.get_loc(col) + 1
-                      , col + " missing", 0)
-        masked, plain = [], []
-        temp_masked, temp_plain=[],[]
-        for i in range(0, len(domain) - window_length, window_distance):
-            if (i//window_distance)%16==0 and i!=0:
-                masked.append(torch.cat(temp_masked))
-                plain.append(torch.cat(temp_plain))
-                temp_masked=[]
-                temp_plain=[]
 
-                if i>=16*window_length:
-                    break
+        temp = np.stack([domain[i:i + window_length]
+                         for i in range(0, len(domain)-window_length, window_distance)])
+        result.append(torch.tensor(temp).float())
 
-            for mult in range (1):
-                data_entry = domain.iloc[i:i + window_length].copy()
-                # plain.append(torch.tensor(data_entry.values).float())
-                temp_plain.append(torch.tensor(data_entry.values).float())
 
-                long_miss_time = np.random.randint(0, window_length - len_long_miss, size=num_long_miss)
-                short_miss_time = np.random.randint(0, window_length - len_short_miss, size=num_short_miss)
-                col_nums = np.random.choice([k for k in range(9)], size=7, replace=False)
-                for j, col_num in enumerate(col_nums):
-                    if j < num_long_miss:
-                        data_entry.iloc[long_miss_time[j]: long_miss_time[j] + len_long_miss, col_num * 2] = \
-                            (data_entry.iloc[long_miss_time[j], col_num * 2] +
-                             data_entry.iloc[long_miss_time[j]+len_long_miss, col_num * 2])/2
-                        data_entry.iloc[long_miss_time[j]: long_miss_time[j] + len_long_miss, col_num * 2 + 1] = 1
-                    else:
-                        data_entry.iloc[short_miss_time[j - num_long_miss]: short_miss_time[j - num_long_miss] + len_short_miss,
-                        col_num * 2] = \
-                            (data_entry.iloc[short_miss_time[j - num_long_miss], col_num * 2]+\
-                            data_entry.iloc[short_miss_time[j - num_long_miss] + len_short_miss, col_num * 2])/2
-                        data_entry.iloc[short_miss_time[j - num_long_miss]: short_miss_time[j - num_long_miss] + len_short_miss,
-                        col_num * 2 + 1] = 1
-                # masked.append(torch.tensor(data_entry.values).float())
-                temp_masked.append(torch.tensor(data_entry.values).float())
-
-        result.append(torch.stack(masked))
-        result.append(torch.stack(plain))
 
     return result
 
@@ -181,41 +144,19 @@ class SequenceModule(nn.Module):
         _, (h0, c0) =self.lstm_warmup(x[:, :self.warmup_length])
         return self.lstm(x[:,self.warmup_length:,:self.in_dim], (h0, c0))
 
-class ImputeModel(nn.Module):
-    def __init__(self, in_dim, seq_hidden_dim, out_dim):
-        super().__init__()
-        self.num_layers=2
-        self.seq_hidden_dim=seq_hidden_dim
-        self.in_dim=in_dim
-        self.out_dim=out_dim
-
-        self.lstm=nn.LSTM(in_dim, hidden_size=seq_hidden_dim, num_layers=self.num_layers,
-                          proj_size=in_dim, bidirectional=True,batch_first=True)
-        self.reproject1 = nn.Linear(2*in_dim, in_dim)
-        self.reproject2= nn.Linear(in_dim, out_dim)
-
-    def forward(self, x):
-        #batch, length, dim
-        return self.reproject2(self.reproject1(self.lstm(x)[0])+x)
-
 
 class TrainInvariant(pl.LightningModule):
-    def __init__(self, in_dim, f_embed_dim,  g_embed_dim, out_dim, num_domains):
+    def __init__(self, in_dim, f_embed_dim,  g_embed_dim, out_dim, num_domains, warmup_length):
         super().__init__()
         self.in_dim=in_dim
         self.warmup_length=warmup_length
-        # self.invariant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim, warmup_length)
-        # self.train_variants=nn.ModuleList([SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim, warmup_length) for i in range (num_domains)])
-        # self.test_variant=SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim, warmup_length)
-
-        self.invariant = ImputeModel(in_dim,f_embed_dim, out_dim)
-        self.train_variants = nn.ModuleList(
-            [ImputeModel(in_dim, g_embed_dim, out_dim) for i in range(num_domains)])
-        self.test_variant = ImputeModel(in_dim, g_embed_dim, out_dim)
+        self.invariant=SequenceModule(in_dim, f_embed_dim, f_embed_dim, out_dim, warmup_length)
+        self.train_variants=nn.ModuleList([SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim, warmup_length) for i in range (num_domains)])
+        self.test_variant=SequenceModule(in_dim, g_embed_dim, g_embed_dim, out_dim, warmup_length)
         self.num_domains=num_domains
         self.eta=lambda x,y: x+y
-        self.num_quantities=9
-        self.loss=nn.MSELoss(reduction="sum")
+
+        self.loss=nn.MSELoss()
     def forward(self, x, domain_num):
         result_f = self.invariant(x)
         result_g =self.train_variants[domain_num](x)
@@ -225,46 +166,24 @@ class TrainInvariant(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         # training_step defines the train loop.
         # it is independent of forward
-        total_loss=0
-        # lin_loss=0
-        for i in range(0,self.num_domains*2, 2):
-            #batch, length, dim
-            quantities=batch[i+1][:,:, :2*self.num_quantities][:,:, ::2]
-            mask=batch[i][:,:, :2*self.num_quantities][:,:, 1::2]
-            total_loss += self.loss(self(batch[i], i) * mask, quantities * mask) /mask.sum()
 
-            # total_loss+=self.loss(self(batch[i], i), quantities)/quantities.numel()
-            # lin_interpolated=pd.DataFrame(quantities)
-            # lin_interpolated[mask]=pd.NA
-            # lin_interpolated=torch.tensor(lin_interpolated.interpolate().values).cuda()
-            # lin_loss+=self.loss(lin_interpolated,quantities)
-            # total_loss+=self.loss(self(batch[i], i), quantities)/quantities.numel()
-        self.log("train_loss", total_loss/self.num_domains)
-        # self.log("linear interp", lin_loss/self.num_domains)
-        return total_loss/self.num_domains
+        losses = [self.loss(self(batch[i], i), batch[i][:, self.warmup_length:, :out_dim]) for i in
+                  range(self.num_domains)]
+        loss = 0
+        for i in range(self.num_domains):
+            loss += losses[i]
+        loss = loss / len(losses)
+        self.log("train_loss", loss)
+        return loss
 
     def validation_step(self, batch, batch_idx) :
-        total_loss = 0
-        # lin_loss=0
-        mean_loss=0
-        for i in range(0, self.num_domains * 2, 2):
-            # batch, length, dim
-            quantities = batch[i + 1][:, :, :2 * self.num_quantities][:, :, ::2]
-            mask = batch[i][:, :, :2 * self.num_quantities][:, :, 1::2]
-            total_loss += self.loss(self(batch[i], i) * mask, quantities * mask) /mask.sum()
-            # for j in range (mask.shape[0]):
-            #     lin_interpolated = pd.DataFrame(numpy_it(quantities[j]))
-            #     lin_interpolated[numpy_it(mask[j].squeeze().bool())] = pd.NA
-            #     lin_interpolated = torch.tensor(lin_interpolated.interpolate(limit_direction="both").values).cuda()
-            #     lin_loss += self.loss(lin_interpolated, quantities[j])/mask.sum()
-            mean_loss+= self.loss(batch[i][:, :, :2 * self.num_quantities][:, :, ::2] * mask,
-                                  quantities * mask) /mask.sum()
-        self.log("val_loss", total_loss / self.num_domains)
-        # wandb.log("linear_interp", lin_loss/self.num_domains)
-
-        # wandb.log({"linear_interp": lin_loss/self.num_domains})
-        wandb.log({"mean_loss": mean_loss/self.num_domains})
-
+        losses = [self.loss(self(batch[i], i), batch[i][:, self.warmup_length:, :out_dim]) for i in
+                  range(self.num_domains)]
+        loss = 0
+        for i in range(self.num_domains):
+            loss += losses[i]
+        loss = loss / len(losses)  # Logging to TensorBoard (if installed) by default
+        self.log("val_loss", loss)
     # def on_fit_end(self):
 
     def configure_optimizers(self):
@@ -307,20 +226,17 @@ if __name__=="__main__":
     key="c20d41ecf28a9b0efa2c5acb361828d1319bc62e"
 
 
-    predict_length = 200
-    warmup_length=100
-    data_length= predict_length + warmup_length
+    predict_length = 102
+    warmup_length=50
+    window_length= predict_length + warmup_length
     f_embed_dim = 100
     g_embed_dim=50
     max_epoch=2000
-    window_length = 152
-    len_long_miss, len_short_miss = 20, 3
-    num_long_miss, num_short_miss = 4, 5
-    total_miss=len_long_miss*num_long_miss+len_short_miss*num_short_miss
-    window_distance = window_length
 
-    all_dataset = TensorDataset(*make_water_data(raw=raw, data_length=data_length, drop_columns=drop_columns))
-    in_dim = 23
+    window_distance = window_length//5
+    #window length / drop columnsnot used
+    all_dataset = TensorDataset(*make_water_data(raw=raw, data_length=window_length, drop_columns=drop_columns))
+    in_dim = 5
     out_dim = 9
     num_domains=len(raw)
     split_fraction=1
@@ -348,19 +264,21 @@ if __name__=="__main__":
                                            "max_epoch": max_epoch,
                                            "file":os.path.basename(__file__)})
 
-    base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains)
+    base_trans=TrainInvariant(in_dim, f_embed_dim=f_embed_dim, g_embed_dim=g_embed_dim,out_dim=out_dim,num_domains=num_domains,
+                              warmup_length=warmup_length)
     #
 
     # base_trans = TrainInvariant.load_from_checkpoint(get_latest_file(),in_dim=in_dim, f_embed_dim=f_embed_dim,
     #                                                  g_embed_dim=g_embed_dim,
     #                                                  out_dim=out_dim,
     #                                                  num_domains=num_domains)
-    # base_trans = TrainInvariant.load_from_checkpoint("epoch=95-step=96.ckpt",
+    # base_trans = TrainInvariant.load_from_checkpoint("epoch=1990-step=21901.ckpt",
     #                                                  in_dim=in_dim,
     #                                                  f_embed_dim=f_embed_dim,
     #                                                  g_embed_dim=g_embed_dim,
     #                                                  out_dim=out_dim,
     #                                                  num_domains=num_domains,
+    #                                                  warmup_length=warmup_length
     #                                                  )
 
 
@@ -370,7 +288,7 @@ if __name__=="__main__":
     # small_error_callback = EarlyStopping(monitor="val_loss", stopping_threshold=0.02)
     model_callback = ModelCheckpoint(
         save_top_k=1,
-        monitor="val_loss",
+        monitor="train_loss",
         mode="min",
 
     )
